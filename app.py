@@ -73,7 +73,7 @@ LANG_OPTIONS = [
     ("Belarusian", Language.BELARUSIAN.value),
     ("English", Language.ENGLISH.value),
 ]
-MODEL_OPTIONS = [
+MODEL_CANDIDATES = [
     ("flash", "models/gemini-2.5-flash"),
     ("pro", "models/gemini-2.5-pro"),
     ("flash-lite", "models/gemini-2.5-flash-lite"),
@@ -94,7 +94,7 @@ def _register_gemini_models() -> None:
     api_key = secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
     if not api_key:
         return
-    for _title, model in MODEL_OPTIONS:
+    for _title, model in MODEL_CANDIDATES:
         try:
             ai_registry.register(model, GeminiAIAdapter(api_key=api_key, model=model))
         except CallsAnalyserError:
@@ -103,6 +103,33 @@ def _register_gemini_models() -> None:
 
 
 _register_gemini_models()
+
+
+def _build_model_options() -> list[tuple[str, str]]:
+    """Return dropdown options for configured AI models."""
+
+    options: list[tuple[str, str]] = []
+    for title, model_key in MODEL_CANDIDATES:
+        if model_key not in ai_registry:
+            continue
+        provider = ai_registry.get(model_key)
+        provider_label = getattr(provider, "provider_name", model_key)
+        options.append((f"{provider_label} • {title}", model_key))
+    return options
+
+
+MODEL_OPTIONS = _build_model_options()
+MODEL_PLACEHOLDER_CHOICE = (
+    "Configure GOOGLE_API_KEY to enable Gemini models",
+    "",
+)
+MODEL_CHOICES = MODEL_OPTIONS or [MODEL_PLACEHOLDER_CHOICE]
+MODEL_DEFAULT = MODEL_OPTIONS[0][1] if MODEL_OPTIONS else MODEL_PLACEHOLDER_CHOICE[1]
+MODEL_INFO = (
+    "Select an AI model for call analysis"
+    if MODEL_OPTIONS
+    else "Add GOOGLE_API_KEY to secrets and reload to enable models"
+)
 
 def _build_tenant_service() -> TenantService:
     return TenantService(
@@ -200,6 +227,8 @@ def ui_analyze(
 ):
     if df is None or df.empty or selected_idx is None:
         return "First fetch the list, choose a call, and (optionally) click ‘🎧 Play’."
+    if len(ai_registry) == 0:
+        return "❌ No AI models are configured. Add provider credentials and reload the app."
     if model_pref not in ai_registry:
         return "❌ Selected model is not available. Check API key or provider configuration."
     try:
@@ -296,7 +325,13 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
             with gr.Row():
                 tpl_dd = gr.Dropdown(choices=TPL_OPTIONS, value="simple", label="Template")
                 lang_dd = gr.Dropdown(choices=LANG_OPTIONS, value=Language.AUTO.value, label="Language")
-                model_dd = gr.Dropdown(choices=MODEL_OPTIONS, value="models/gemini-2.5-flash", label="Model")
+                model_dd = gr.Dropdown(
+                    choices=MODEL_CHOICES,
+                    value=MODEL_DEFAULT,
+                    label="Model",
+                    interactive=bool(MODEL_OPTIONS),
+                    info=MODEL_INFO,
+                )
             custom_prompt_tb = gr.Textbox(label="Custom prompt", lines=8, visible=False)
             analyze_btn = gr.Button("🧠 Analyze", variant="primary")
             analysis_md = gr.Markdown()
