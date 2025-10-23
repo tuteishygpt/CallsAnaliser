@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from os import PathLike
 
 
 class StoragePort(ABC):
@@ -12,8 +13,8 @@ class StoragePort(ABC):
         """Return the URI that would be used for ``file_name`` without writing."""
 
     @abstractmethod
-    def save(self, data: bytes, file_name: str) -> str:
-        """Persist ``data`` under ``file_name`` and return a URI."""
+    def save_file(self, data: bytes | str | PathLike[str], file_name: str) -> str:
+        """Persist ``data`` or copy from the given path and return a URI."""
 
     @abstractmethod
     def open(self, uri: str) -> bytes:
