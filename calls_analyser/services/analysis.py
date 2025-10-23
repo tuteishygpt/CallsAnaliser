@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import MutableMapping, Optional
 
 from calls_analyser.domain.models import AnalysisResult, Language
 from calls_analyser.ports.ai import AIModelPort
@@ -29,6 +29,9 @@ class FileAudioSource:
     content: bytes | None = None
 
 
+CacheKey = tuple[str, str, str, str, str, str]
+
+
 class AnalysisService:
     """Coordinates telephony, storage and AI providers."""
 
@@ -37,11 +40,12 @@ class AnalysisService:
         call_log_service: CallLogService,
         ai_registry: ProviderRegistry[AIModelPort],
         prompt_service: PromptService,
+        cache: MutableMapping[CacheKey, AnalysisResult] | None = None,
     ) -> None:
         self._call_log_service = call_log_service
         self._ai_registry = ai_registry
         self._prompt_service = prompt_service
-        self._cache: Dict[Tuple[str, str, str, str, str], AnalysisResult] = {}
+        self._cache: MutableMapping[CacheKey, AnalysisResult] = cache if cache is not None else {}
 
     def analyze_call(
         self,
@@ -52,11 +56,14 @@ class AnalysisService:
     ) -> AnalysisResult:
         """Return an analysis of the call ensuring idempotency."""
 
+        provider = self._ai_registry.get(options.model_key)
+        provider_name = getattr(provider, "provider_name", options.model_key)
         custom_fragment = (options.custom_prompt or "").strip()
-        cache_key = (
+        cache_key: CacheKey = (
             tenant.tenant_id,
             unique_id,
             options.prompt_key,
+            provider_name,
             options.model_key,
             custom_fragment,
         )
@@ -68,8 +75,12 @@ class AnalysisService:
         prompt_template = self._prompt_service.get_prompt(options.prompt_key)
         prompt_body = options.custom_prompt.strip() if options.custom_prompt else prompt_template.body
 
-        provider = self._ai_registry.get(options.model_key)
         audio_source = FileAudioSource(path=handle.local_uri)
         result = provider.analyze(audio_source, prompt_body, lang, options={"tenant_id": tenant.tenant_id})
         self._cache[cache_key] = result
         return result
+
+    def clear_cache(self) -> None:
+        """Remove cached analysis results."""
+
+        self._cache.clear()
