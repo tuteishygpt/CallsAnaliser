@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calls_analyser.domain.models import AnalysisResult, Language, RecordingHandle
-from calls_analyser.services.analysis import AnalysisOptions, AnalysisService
+from calls_analyser.services.analysis import CacheKey, AnalysisOptions, AnalysisService
 from calls_analyser.services.prompt import PromptService, PromptTemplate
 from calls_analyser.services.registry import ProviderRegistry
 from calls_analyser.ports.ai import AIModelPort, AudioSource
@@ -54,3 +54,28 @@ def test_analysis_service_is_idempotent() -> None:
     assert ai.calls == 1
     assert ai.last_prompt == "custom"
     assert call_log_service.calls == 1
+
+
+def test_analysis_service_accepts_external_cache() -> None:
+    registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
+    ai = FakeAIModel()
+    registry.register("fake-model", ai)
+    prompt_service = PromptService(PROMPTS)
+    call_log_service = StubCallLogService()
+    cache: dict[CacheKey, AnalysisResult] = {}
+    service = AnalysisService(call_log_service, registry, prompt_service, cache=cache)
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
+
+    options = AnalysisOptions(model_key="fake-model", prompt_key="simple", custom_prompt="custom ")
+    service.analyze_call("abc", tenant, Language.BELARUSIAN, options)
+
+    expected_key: CacheKey = (
+        tenant.tenant_id,
+        "abc",
+        options.prompt_key,
+        ai.provider_name,
+        options.model_key,
+        "custom",
+    )
+    assert expected_key in cache
+    assert cache[expected_key].text == "result-1"
