@@ -25,3 +25,12 @@ def test_save_file_from_path(tmp_path: Path) -> None:
 
     saved_path = Path(uri)
     assert saved_path.read_bytes() == b"abc"
+
+
+def test_save_file_from_text(tmp_path: Path) -> None:
+    adapter = LocalStorageAdapter(base_dir=tmp_path)
+
+    uri = adapter.save_file("hello", "text.txt")
+
+    saved_path = Path(uri)
+    assert saved_path.read_text(encoding="utf-8") == "hello"

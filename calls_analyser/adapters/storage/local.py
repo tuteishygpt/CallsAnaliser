@@ -26,11 +26,14 @@ class LocalStorageAdapter(StoragePort):
             if isinstance(data, (bytes, bytearray)):
                 with open(uri, "wb") as dest:
                     dest.write(data)
+            elif isinstance(data, str):
+                with open(uri, "wb") as dest:
+                    dest.write(data.encode("utf-8"))
             else:
                 source = Path(fspath(data))
                 with open(source, "rb") as src, open(uri, "wb") as dest:
                     copyfileobj(src, dest)
-        except (OSError, TypeError) as exc:
+        except (OSError, TypeError, AttributeError) as exc:
             raise StorageError(f"Failed to save recording to {uri}") from exc
         return uri
 
