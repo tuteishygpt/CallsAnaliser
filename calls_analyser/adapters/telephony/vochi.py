@@ -1,7 +1,7 @@
 """Vochi telephony adapter."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Iterable, List, Optional
 
 import requests
@@ -42,9 +42,20 @@ class VochiTelephonyAdapter(TelephonyPort):
             headers["Authorization"] = f"Bearer {self._bearer}"
         return headers
 
-    def list_calls(self, day: date, tenant_id: str) -> Iterable[CallLogEntry]:
+    def list_calls(
+        self,
+        day: date,
+        tenant_id: str,
+        time_from: Optional[time] = None,
+        time_to: Optional[time] = None,
+        call_type: Optional[int] = None,
+    ) -> Iterable[CallLogEntry]:
         url = f"{self._base_url}/calllogs"
-        params = {"start": day.isoformat(), "end": day.isoformat(), "clientId": self._client_id}
+        start_value = self._format_datetime(day, time_from or time.min)
+        end_value = self._format_datetime(day, time_to or time.max.replace(microsecond=0))
+        params: dict[str, str | int] = {"start": start_value, "end": end_value, "clientId": self._client_id}
+        if call_type is not None:
+            params["calltype"] = call_type
         try:
             response = self._http.get(url, params=params, headers=self._headers(), timeout=60)
             response.raise_for_status()
@@ -73,6 +84,11 @@ class VochiTelephonyAdapter(TelephonyPort):
             )
             entries.append(entry)
         return entries
+
+    @staticmethod
+    def _format_datetime(day: date, time_value: time) -> str:
+        dt = datetime.combine(day, time_value)
+        return dt.replace(microsecond=0).isoformat()
 
     def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
         url = f"{self._base_url}/calllogs/{self._client_id}/{unique_id}"

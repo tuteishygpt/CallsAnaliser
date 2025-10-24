@@ -1,8 +1,8 @@
 """Call log service."""
 from __future__ import annotations
 
-from datetime import date
-from typing import List
+from datetime import date, time
+from typing import List, Optional
 
 from calls_analyser.domain.models import CallLogEntry, RecordingHandle
 from calls_analyser.ports.storage import StoragePort
@@ -17,10 +17,25 @@ class CallLogService:
         self._telephony = telephony
         self._storage = storage
 
-    def list_calls(self, day: date, tenant: TenantConfig) -> List[CallLogEntry]:
-        """Return call log entries for ``day``."""
+    def list_calls(
+        self,
+        day: date,
+        tenant: TenantConfig,
+        time_from: Optional[time] = None,
+        time_to: Optional[time] = None,
+        call_type: Optional[int] = None,
+    ) -> List[CallLogEntry]:
+        """Return call log entries for ``day`` with optional filters."""
 
-        return list(self._telephony.list_calls(day=day, tenant_id=tenant.tenant_id))
+        return list(
+            self._telephony.list_calls(
+                day=day,
+                tenant_id=tenant.tenant_id,
+                time_from=time_from,
+                time_to=time_to,
+                call_type=call_type,
+            )
+        )
 
     def ensure_recording(self, unique_id: str, tenant: TenantConfig) -> RecordingHandle:
         """Return a handle to a locally stored recording."""
