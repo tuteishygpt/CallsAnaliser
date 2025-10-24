@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 from calls_analyser.domain.models import CallLogEntry, Recording
@@ -24,7 +24,7 @@ class FakeTelephony(TelephonyPort):
             )
         ]
 
-    def list_calls(self, day: date, tenant_id: str):
+    def list_calls(self, day: date, tenant_id: str, time_from=None, time_to=None, call_type=None):
         return list(self.calls)
 
     def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
@@ -55,6 +55,6 @@ def test_list_calls_returns_entries(tmp_path: Path) -> None:
     service = CallLogService(telephony, storage)
     tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
 
-    calls = service.list_calls(date(2024, 6, 1), tenant)
+    calls = service.list_calls(date(2024, 6, 1), tenant, time_from=time(8, 0), time_to=time(12, 0), call_type=0)
     assert len(calls) == 1
     assert calls[0].unique_id == "abc"

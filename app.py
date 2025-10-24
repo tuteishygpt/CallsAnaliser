@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import tempfile
 from typing import Optional
 
 import gradio as gr
@@ -73,6 +74,12 @@ LANG_OPTIONS = [
     ("Belarusian", Language.BELARUSIAN.value),
     ("English", Language.ENGLISH.value),
 ]
+CALL_TYPE_OPTIONS = [
+    ("Усе тыпы", ""),
+    ("Уваходны", "0"),
+    ("Выходны", "1"),
+    ("Унутраны", "2"),
+]
 MODEL_CANDIDATES = [
     ("flash", "models/gemini-2.5-flash"),
     ("pro", "models/gemini-2.5-pro"),
@@ -130,6 +137,14 @@ MODEL_INFO = (
     if MODEL_OPTIONS
     else "Add GOOGLE_API_KEY to secrets and reload to enable models"
 )
+BATCH_PROMPT_KEY = os.environ.get("BATCH_PROMPT_KEY", "simple")
+BATCH_PROMPT_TEXT = os.environ.get("BATCH_PROMPT_TEXT", "").strip()
+BATCH_MODEL_KEY = os.environ.get("BATCH_MODEL_KEY") or MODEL_DEFAULT or ""
+BATCH_LANGUAGE_CODE = os.environ.get("BATCH_LANGUAGE", Language.AUTO.value)
+try:
+    BATCH_LANGUAGE = Language(BATCH_LANGUAGE_CODE)
+except ValueError:
+    BATCH_LANGUAGE = Language.AUTO
 
 def _build_tenant_service() -> TenantService:
     return TenantService(
@@ -166,29 +181,104 @@ def _label_row(row: dict) -> str:
     return f"{start} | {src} → {dst} ({dur}s)"
 
 
-def _parse_day(day_str: str) -> _dt.date:
-    return _dt.date.fromisoformat(day_str.strip())
+def _parse_day(day_value) -> _dt.date:
+    if isinstance(day_value, _dt.date):
+        return day_value
+    if not day_value:
+        raise ValueError("Дата не зададзена.")
+    return _dt.date.fromisoformat(str(day_value).strip())
+
+
+def _parse_time_value(time_value) -> Optional[_dt.time]:
+    if time_value in (None, ""):
+        return None
+    if isinstance(time_value, _dt.datetime):
+        return time_value.time().replace(microsecond=0)
+    if isinstance(time_value, _dt.time):
+        return time_value.replace(microsecond=0)
+    value = str(time_value).strip()
+    if not value:
+        return None
+    try:
+        parsed = _dt.time.fromisoformat(value)
+    except ValueError as exc:
+        if len(value) == 5 and value.count(":") == 1:
+            parsed = _dt.time.fromisoformat(f"{value}:00")
+        else:
+            raise ValueError(f"Няправільны фармат часу: {value}") from exc
+    return parsed.replace(microsecond=0)
+
+
+def _validate_time_range(time_from: Optional[_dt.time], time_to: Optional[_dt.time]) -> None:
+    if time_from and time_to and time_from > time_to:
+        raise ValueError("Час ""ад"" павінен быць менш або роўны часу ""да"".")
+
+
+def _build_dropdown(df: pd.DataFrame) -> gr.Update:
+    opts = [( _label_row(row), idx) for idx, row in df.iterrows()]
+    value = opts[0][1] if opts else None
+    return gr.update(choices=[(label, idx) for label, idx in opts], value=value)
+
+
+def _result_table_html(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return "<em>Няма апрацаваных званкоў.</em>"
+    df = pd.DataFrame(rows)
+    return df.to_html(index=False, escape=False)
 
 
 # ----------------------------------------------------------------------------
 # Gradio handlers
 # ----------------------------------------------------------------------------
 
-def ui_fetch_calls(date_str: str, tenant_id: str):
+def ui_filter_calls(
+    date_value,
+    time_from_value,
+    time_to_value,
+    call_type_value: str,
+    authed: bool,
+    tenant_id: str,
+):
+    if not authed:
+        return (
+            pd.DataFrame(),
+            gr.update(choices=[], value=None),
+            "🔒 Увядзіце пароль, каб прымяніць фільтр.",
+            gr.update(visible=True),
+        )
     try:
-        day = _parse_day(date_str)
+        day = _parse_day(date_value)
+        time_from = _parse_time_value(time_from_value)
+        time_to = _parse_time_value(time_to_value)
+        _validate_time_range(time_from, time_to)
+        call_type = int(call_type_value) if str(call_type_value).strip() else None
         tenant = tenant_service.resolve(tenant_id or None)
-        entries = call_log_service.list_calls(day, tenant)
+        entries = call_log_service.list_calls(
+            day,
+            tenant,
+            time_from=time_from,
+            time_to=time_to,
+            call_type=call_type,
+        )
         data = [entry.raw for entry in entries]
         df = pd.DataFrame(data)
-        opts = [( _label_row(row), idx) for idx, row in df.iterrows()]
-        dd = gr.update(choices=[(label, idx) for label, idx in opts], value=(opts[0][1] if opts else None))
-        msg = f"Calls found: {len(df)}"
-        return df, dd, msg
+        dd = _build_dropdown(df)
+        msg = f"Знойдзена званкоў: {len(df)}"
+        return df, dd, msg, gr.update(visible=False)
     except CallsAnalyserError as exc:
-        return pd.DataFrame(), gr.update(choices=[], value=None), f"Domain error: {exc}"
+        return (
+            pd.DataFrame(),
+            gr.update(choices=[], value=None),
+            f"Domain error: {exc}",
+            gr.update(visible=False),
+        )
     except Exception as exc:
-        return pd.DataFrame(), gr.update(choices=[], value=None), f"Load error: {exc}"
+        return (
+            pd.DataFrame(),
+            gr.update(choices=[], value=None),
+            f"Load error: {exc}",
+            gr.update(visible=False),
+        )
 
 
 def ui_play_audio(selected_idx: Optional[int], df: pd.DataFrame, tenant_id: str):
@@ -258,6 +348,109 @@ def ui_analyze(
         return f"Analysis failed: {exc}"
 
 
+def ui_mass_analyze(
+    date_value,
+    time_from_value,
+    time_to_value,
+    call_type_value: str,
+    tenant_id: str,
+    authed: bool,
+    progress=gr.Progress(track_tqdm=False),
+):
+    empty_state = pd.DataFrame()
+    reset_file = gr.update(value=None, visible=False)
+    progress(0, desc="Падрыхтоўка")
+    if not authed:
+        return empty_state, _result_table_html([]), "", "🔒 Увядзіце пароль, каб запусціць масавы аналіз.", reset_file
+    if len(ai_registry) == 0 or not BATCH_MODEL_KEY:
+        return empty_state, _result_table_html([]), "", "❌ Масавы аналіз недаступны: не наладжаны AI-мадэль.", reset_file
+    if BATCH_MODEL_KEY not in ai_registry:
+        return empty_state, _result_table_html([]), "", "❌ Абраная мадэль для масавага аналізу недаступная.", reset_file
+    try:
+        day = _parse_day(date_value)
+        time_from = _parse_time_value(time_from_value)
+        time_to = _parse_time_value(time_to_value)
+        _validate_time_range(time_from, time_to)
+        call_type = int(call_type_value) if str(call_type_value).strip() else None
+        tenant = tenant_service.resolve(tenant_id or None)
+        entries = call_log_service.list_calls(
+            day,
+            tenant,
+            time_from=time_from,
+            time_to=time_to,
+            call_type=call_type,
+        )
+        total = len(entries)
+        if total == 0:
+            return (
+                empty_state,
+                _result_table_html([]),
+                "Знойдзена: 0, апрацавана: 0",
+                "ℹ️ Па дадзеным фільтры званкі адсутнічаюць.",
+                reset_file,
+            )
+
+        rows: list[dict[str, object]] = []
+        success = 0
+        for idx, entry in enumerate(entries):
+            progress(idx / total, desc=f"Аналіз {idx + 1}/{total}")
+            row_data: dict[str, object] = {
+                "Пачатак": entry.started_at.isoformat() if entry.started_at else entry.raw.get("Start", ""),
+                "Кліент": entry.caller_id or "",
+                "Напрамак": entry.destination or "",
+                "Даўжыня (с)": entry.duration_seconds,
+                "UniqueId": entry.unique_id,
+            }
+            handle = None
+            try:
+                handle = call_log_service.ensure_recording(entry.unique_id, tenant)
+                result = analysis_service.analyze_call(
+                    unique_id=entry.unique_id,
+                    tenant=tenant,
+                    lang=BATCH_LANGUAGE,
+                    options=AnalysisOptions(
+                        model_key=BATCH_MODEL_KEY,
+                        prompt_key=BATCH_PROMPT_KEY,
+                        custom_prompt=BATCH_PROMPT_TEXT or None,
+                    ),
+                )
+                link = handle.source_uri or handle.local_uri
+                row_data["Вынік"] = result.text
+                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
+                row_data["Статус"] = "✅"
+                success += 1
+            except CallsAnalyserError as exc:
+                link = handle.source_uri if handle else entry.raw.get("RecordUrl", "")
+                row_data["Вынік"] = f"❌ {exc}"
+                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
+                row_data["Статус"] = "❌"
+            except Exception as exc:
+                link = handle.source_uri if handle else entry.raw.get("RecordUrl", "")
+                row_data["Вынік"] = f"❌ {exc}"
+                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
+                row_data["Статус"] = "❌"
+            rows.append(row_data)
+            progress((idx + 1) / total, desc=f"Аналіз {idx + 1}/{total}")
+
+        df = pd.DataFrame(rows)
+        summary = f"Знойдзена: {total}, апрацавана: {success}"
+        status = "✅ Масавы аналіз завершаны."
+        return df, _result_table_html(rows), summary, status, reset_file
+    except CallsAnalyserError as exc:
+        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+    except Exception as exc:
+        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+
+
+def ui_export_results(results_df: pd.DataFrame):
+    if results_df is None or results_df.empty:
+        return gr.update(value=None, visible=False), "❌ Няма дадзеных для экспарту."
+    with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
+        results_df.to_csv(tmp.name, index=False)
+        file_path = tmp.name
+    return gr.update(value=file_path, visible=True), "✅ Файл гатовы да захавання."
+
+
 def ui_check_password(pwd: str):
     if not _UI_PASSWORD:
         return False, (
@@ -265,15 +458,8 @@ def ui_check_password(pwd: str):
             "Дадайце яго ў Settings → Secrets і перазапусціце Space."
         ), gr.update(visible=True)
     if (pwd or "").strip() == _UI_PASSWORD:
-        return True, "✅ Доступ адкрыты. Цяпер можна націскаць <b>Fetch list</b> і працаваць.", gr.update(visible=False)
+        return True, "✅ Доступ адкрыты. Цяпер можна націскаць <b>Фільтр</b> і працаваць.", gr.update(visible=False)
     return False, "❌ Няправільны пароль. Паспрабуйце яшчэ раз.", gr.update(visible=True)
-
-
-def ui_fetch_or_auth(date_str: str, authed: bool, tenant_id: str):
-    if not authed:
-        return gr.update(), gr.update(), "🔒 Увядзіце пароль, каб атрымаць званкі.", gr.update(visible=True)
-    df, dd, msg = ui_fetch_calls(date_str, tenant_id)
-    return df, dd, msg, gr.update(visible=False)
 
 
 # ----------------------------------------------------------------------------
@@ -294,12 +480,13 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     gr.Markdown(
         """
         # Vochi CRM → MP3 → AI analysis
-        *Fetch daily calls, play/download MP3, and analyze the call with an AI model.*
+        *Фільтруйце званкі па даце, часе і тыпе, праслухоўвайце запісы і запускайце масавы AI-аналіз.*
 
         """
     )
 
     authed = gr.State(False)
+    batch_results_state = gr.State(pd.DataFrame())
 
     with gr.Group(visible=False) as pwd_group:
         gr.Markdown("### 🔐 Увядзіце пароль")
@@ -310,16 +497,26 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         with gr.Tab("Vochi CRM"):
             with gr.Row():
                 tenant_tb = gr.Textbox(label="Tenant ID", value=DEFAULT_TENANT_ID, scale=1)
-                date_inp = gr.Textbox(label="Date", value=_today_str(), scale=1)
-                fetch_btn = gr.Button("Fetch list", variant="primary", scale=0)
-            calls_df = gr.Dataframe(value=pd.DataFrame(), label="Call list", interactive=False)
-            row_dd = gr.Dropdown(choices=[], label="Call", info="Select a row for playback/analysis")
+                date_inp = gr.Date(label="Дата", value=_today_str(), scale=1)
+                time_from_inp = gr.Time(label="Час ад", scale=1)
+                time_to_inp = gr.Time(label="Час да", scale=1)
+                call_type_dd = gr.Dropdown(choices=CALL_TYPE_OPTIONS, value="", label="Тып званка", scale=1)
+            with gr.Row():
+                filter_btn = gr.Button("Фільтр", variant="primary", scale=0)
+                batch_btn = gr.Button("Масавы аналіз", variant="secondary", scale=0)
+                save_btn = gr.Button("Захаваць у файл", scale=0)
+            status_fetch = gr.Markdown()
+            calls_df = gr.Dataframe(value=pd.DataFrame(), label="Спіс званкоў", interactive=False)
+            row_dd = gr.Dropdown(choices=[], label="Званок", info="Абярыце радок для праслухоўвання/аналізу")
             with gr.Row():
                 play_btn = gr.Button("🎧 Play")
             url_html = gr.HTML()
             audio_out = gr.Audio(label="Audio", type="filepath")
             file_out = gr.File(label="MP3 download")
-            status_fetch = gr.Markdown()
+            batch_summary_md = gr.Markdown()
+            batch_results_html = gr.HTML()
+            batch_status_md = gr.Markdown()
+            batch_file = gr.File(label="Экспарт CSV", visible=False)
 
         with gr.Tab("AI Analysis"):
             with gr.Row():
@@ -336,9 +533,9 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
             analyze_btn = gr.Button("🧠 Analyze", variant="primary")
             analysis_md = gr.Markdown()
 
-    fetch_btn.click(
-        ui_fetch_or_auth,
-        inputs=[date_inp, authed, tenant_tb],
+    filter_btn.click(
+        ui_filter_calls,
+        inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, authed, tenant_tb],
         outputs=[calls_df, row_dd, status_fetch, pwd_group],
     )
 
@@ -346,6 +543,12 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         ui_check_password,
         inputs=[pwd_tb],
         outputs=[authed, status_fetch, pwd_group],
+    )
+
+    batch_btn.click(
+        ui_mass_analyze,
+        inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
+        outputs=[batch_results_state, batch_results_html, batch_summary_md, batch_status_md, batch_file],
     )
 
     play_btn.click(
@@ -360,6 +563,12 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         ui_analyze,
         inputs=[row_dd, calls_df, tpl_dd, custom_prompt_tb, lang_dd, model_dd, tenant_tb],
         outputs=[analysis_md],
+    )
+
+    save_btn.click(
+        ui_export_results,
+        inputs=[batch_results_state],
+        outputs=[batch_file, batch_status_md],
     )
 
 

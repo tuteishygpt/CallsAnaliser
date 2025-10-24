@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import date
-from typing import Iterable
+from datetime import date, time
+from typing import Iterable, Optional
 
 from calls_analyser.domain.models import CallLogEntry, Recording
 
@@ -12,7 +12,14 @@ class TelephonyPort(ABC):
     """Abstract port for telephony providers."""
 
     @abstractmethod
-    def list_calls(self, day: date, tenant_id: str) -> Iterable[CallLogEntry]:
+    def list_calls(
+        self,
+        day: date,
+        tenant_id: str,
+        time_from: Optional[time] = None,
+        time_to: Optional[time] = None,
+        call_type: Optional[int] = None,
+    ) -> Iterable[CallLogEntry]:
         """Return all call log entries for the given tenant and day."""
 
     @abstractmethod
