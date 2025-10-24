@@ -53,9 +53,20 @@ class VochiTelephonyAdapter(TelephonyPort):
         url = f"{self._base_url}/calllogs"
         start_value = self._format_datetime(day, time_from or time.min)
         end_value = self._format_datetime(day, time_to or time.max.replace(microsecond=0))
-        params: dict[str, str | int] = {"start": start_value, "end": end_value, "clientId": self._client_id}
+        # Include multiple common variants of parameter names to be robust to API expectations.
+        # Keep original lowercase keys for backward compatibility and tests.
+        params: dict[str, str | int] = {
+            "start": start_value,
+            "Start": start_value,
+            "end": end_value,
+            "End": end_value,
+            "clientId": self._client_id,
+            "clientid": self._client_id,
+        }
         if call_type is not None:
             params["calltype"] = call_type
+            params["callType"] = call_type
+            params["Calltype"] = call_type
         try:
             response = self._http.get(url, params=params, headers=self._headers(), timeout=60)
             response.raise_for_status()

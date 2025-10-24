@@ -35,6 +35,11 @@ class TenantService:
         base = self._secrets.get_optional_secret("VOCHI_BASE_URL", tenant_id=tid)
         if not base:
             base = self._secrets.get_optional_secret("VOCHI_BASE_URL", tenant_id=None) or self._default_base_url
+        # Normalize base to include '/api' path segment
+        base = base.rstrip('/')
+        if not base.endswith('/api'):
+            # Only append if '/api' is not already present as the last segment
+            base = f"{base}/api"
         client_id = self._secrets.get_secret("VOCHI_CLIENT_ID", tenant_id=tid)
         bearer = self._secrets.get_optional_secret("VOCHI_BEARER", tenant_id=tid)
         return TenantConfig(tenant_id=tid, vochi_base_url=base, vochi_client_id=client_id, bearer_token=bearer)

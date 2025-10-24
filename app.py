@@ -5,6 +5,7 @@ import datetime as _dt
 import os
 import tempfile
 from typing import Optional
+import json
 
 import gradio as gr
 import pandas as pd
@@ -21,51 +22,17 @@ from calls_analyser.services.call_log import CallLogService
 from calls_analyser.services.prompt import PromptService, PromptTemplate
 from calls_analyser.services.registry import ProviderRegistry
 from calls_analyser.services.tenant import TenantService
+from calls_analyser.config import (
+    PROMPTS as CFG_PROMPTS,
+    MODEL_CANDIDATES as CFG_MODEL_CANDIDATES,
+    BATCH_MODEL_KEY as CFG_BATCH_MODEL_KEY,
+    BATCH_PROMPT_KEY as CFG_BATCH_PROMPT_KEY,
+    BATCH_PROMPT_TEXT as CFG_BATCH_PROMPT_TEXT,
+    BATCH_LANGUAGE_CODE as CFG_BATCH_LANGUAGE_CODE,
+)
 
 
-PROMPTS = {
-    "simple": PromptTemplate(
-        key="simple",
-        title="Simple",
-        body=(
-            "You are a call-center conversation analyst for a medical clinic. From the call recording, provide a brief summary:\n"
-            "- Purpose of the call (appointment / results / complaint / billing / other).\n"
-            "- Patient intent and expectations.\n"
-            "- Outcome (booked / call-back / routed / unresolved).\n"
-            "- Next steps (owner and when).\n"
-            "- Patient emotion (1–5) and agent tone (1–5).\n"
-            "- Alerts: urgency/risks/privacy.\n\n"
-            "Keep it short (6–8 lines). End with a line: ‘Service quality rating: X/5’ and one sentence explaining the rating."
-        ),
-    ),
-    "medium": PromptTemplate(
-        key="medium",
-        title="Medium",
-        body=(
-            "Act as a senior service analyst. Analyze the call using this structure:\n"
-            "1) Quick overview: reason for the call, intent, key facts, urgency (low/medium/high).\n"
-            "2) Call flow (2–4 bullets): what was asked/answered, where friction occurred.\n"
-            "3) Outcomes & tasks: concrete next actions for clinic/patient with timeframes.\n"
-            "4) Emotions & empathy: patient mood; agent empathy (0–5).\n"
-            "5) Procedural compliance: identity verification, disclosure of recording (if stated), no off-protocol medical advice, data accuracy.\n"
-            "6) Quality rating (0–100) using rubric: greeting, verification, accuracy, empathy, issue resolution (each 0–20)."
-        ),
-    ),
-    "detailed": PromptTemplate(
-        key="detailed",
-        title="Detailed",
-        body=(
-            "You are a quality & operations analyst. Provide an in-depth analysis:\n"
-            "A) Segmentation: split the call into stages with approximate timestamps (if available) and roles (Patient/Agent).\n"
-            "B) Structured data for booking: full name (if stated), date of birth, phone, symptoms/complaints (list), onset/duration, possible pain level 0–10 (if mentioned), required specialist/service, preferred time windows, constraints.\n"
-            "C) Triage & risks: class (routine/urgent/emergency), red flags, whether immediate escalation is needed.\n"
-            "D) Compliance audit: identity/privacy checks, recording disclosure, consent to data processing, booking policies.\n"
-            "E) Conversation metrics: talk ratio (agent/patient), interruptions, long pauses, notable keywords.\n"
-            "F) Coaching for the agent: 3–5 concrete improvements with sample phrasing.\n\n"
-            "Deliver: (1) A short patient-chart summary (2–3 sentences). (2) A task table with columns: priority, owner, due."
-        ),
-    ),
-}
+PROMPTS = CFG_PROMPTS
 
 TPL_OPTIONS = [(tpl.title, tpl.key) for tpl in PROMPTS.values()] + [("Custom", "custom")]
 LANG_OPTIONS = [
@@ -75,16 +42,12 @@ LANG_OPTIONS = [
     ("English", Language.ENGLISH.value),
 ]
 CALL_TYPE_OPTIONS = [
-    ("Усе тыпы", ""),
-    ("Уваходны", "0"),
-    ("Выходны", "1"),
-    ("Унутраны", "2"),
+    ("All types", ""),
+    ("Inbound", "0"),
+    ("Outbound", "1"),
+    ("Internal", "2"),
 ]
-MODEL_CANDIDATES = [
-    ("flash", "models/gemini-2.5-flash"),
-    ("pro", "models/gemini-2.5-pro"),
-    ("flash-lite", "models/gemini-2.5-flash-lite"),
-]
+MODEL_CANDIDATES = CFG_MODEL_CANDIDATES
 
 
 # ----------------------------------------------------------------------------
@@ -137,10 +100,12 @@ MODEL_INFO = (
     if MODEL_OPTIONS
     else "Add GOOGLE_API_KEY to secrets and reload to enable models"
 )
-BATCH_PROMPT_KEY = os.environ.get("BATCH_PROMPT_KEY", "simple")
-BATCH_PROMPT_TEXT = os.environ.get("BATCH_PROMPT_TEXT", "").strip()
-BATCH_MODEL_KEY = os.environ.get("BATCH_MODEL_KEY") or MODEL_DEFAULT or ""
-BATCH_LANGUAGE_CODE = os.environ.get("BATCH_LANGUAGE", Language.AUTO.value)
+
+# Batch settings from config module
+BATCH_PROMPT_KEY = CFG_BATCH_PROMPT_KEY
+BATCH_PROMPT_TEXT = (CFG_BATCH_PROMPT_TEXT or "").strip()
+BATCH_MODEL_KEY = CFG_BATCH_MODEL_KEY or MODEL_DEFAULT or ""
+BATCH_LANGUAGE_CODE = CFG_BATCH_LANGUAGE_CODE
 try:
     BATCH_LANGUAGE = Language(BATCH_LANGUAGE_CODE)
 except ValueError:
@@ -182,11 +147,28 @@ def _label_row(row: dict) -> str:
 
 
 def _parse_day(day_value) -> _dt.date:
+    if isinstance(day_value, _dt.datetime):
+        return day_value.date()
     if isinstance(day_value, _dt.date):
         return day_value
     if not day_value:
-        raise ValueError("Дата не зададзена.")
-    return _dt.date.fromisoformat(str(day_value).strip())
+        raise ValueError("Date not specified.")
+    
+    # Handle Unix timestamp (float) from Gradio DateTime component
+    try:
+        timestamp = float(str(day_value).strip())
+        # Unix timestamps are typically in seconds, check if it's reasonable
+        if timestamp > 1e9:  # Unix timestamp for dates after 2001
+            # Use UTC to avoid timezone issues
+            return _dt.datetime.fromtimestamp(timestamp, tz=_dt.timezone.utc).date()
+    except (ValueError, TypeError):
+        pass
+    
+    # Try to parse as ISO format string
+    try:
+        return _dt.date.fromisoformat(str(day_value).strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid date format: {day_value}") from exc
 
 
 def _parse_time_value(time_value) -> Optional[_dt.time]:
@@ -196,22 +178,53 @@ def _parse_time_value(time_value) -> Optional[_dt.time]:
         return time_value.time().replace(microsecond=0)
     if isinstance(time_value, _dt.time):
         return time_value.replace(microsecond=0)
+    
+    # Handle potential Unix timestamp (though less likely for time inputs)
+    try:
+        timestamp = float(str(time_value).strip())
+        if timestamp > 1e9:  # Unix timestamp
+            # Use UTC to avoid timezone issues
+            return _dt.datetime.fromtimestamp(timestamp, tz=_dt.timezone.utc).time().replace(microsecond=0)
+    except (ValueError, TypeError):
+        pass
+    
     value = str(time_value).strip()
     if not value:
         return None
     try:
+        # Accept 'H:MM' by padding leading zero for hour
+        if value.count(":") == 1 and len(value.split(":")[0]) == 1:
+            value = f"0{value}"
         parsed = _dt.time.fromisoformat(value)
     except ValueError as exc:
         if len(value) == 5 and value.count(":") == 1:
             parsed = _dt.time.fromisoformat(f"{value}:00")
         else:
-            raise ValueError(f"Няправільны фармат часу: {value}") from exc
+            raise ValueError(f"Invalid time format: {value}") from exc
     return parsed.replace(microsecond=0)
 
 
 def _validate_time_range(time_from: Optional[_dt.time], time_to: Optional[_dt.time]) -> None:
     if time_from and time_to and time_from > time_to:
-        raise ValueError("Час ""ад"" павінен быць менш або роўны часу ""да"".")
+        raise ValueError("Time 'from' must be less than or equal to time 'to'.")
+
+
+def _resolve_call_type(value: object) -> Optional[int]:
+    s = str(value).strip()
+    if s == "":
+        return None
+    # Try numeric directly
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    # Fallback: map label -> value using CALL_TYPE_OPTIONS
+    label_to_value = {label: v for (label, v) in CALL_TYPE_OPTIONS}
+    mapped = label_to_value.get(s, "")
+    try:
+        return int(mapped) if mapped != "" else None
+    except ValueError:
+        return None
 
 
 def _build_dropdown(df: pd.DataFrame) -> gr.Update:
@@ -222,7 +235,7 @@ def _build_dropdown(df: pd.DataFrame) -> gr.Update:
 
 def _result_table_html(rows: list[dict[str, object]]) -> str:
     if not rows:
-        return "<em>Няма апрацаваных званкоў.</em>"
+        return "<em>No processed calls.</em>"
     df = pd.DataFrame(rows)
     return df.to_html(index=False, escape=False)
 
@@ -243,7 +256,7 @@ def ui_filter_calls(
         return (
             pd.DataFrame(),
             gr.update(choices=[], value=None),
-            "🔒 Увядзіце пароль, каб прымяніць фільтр.",
+            "🔒 Enter the password to apply the filter.",
             gr.update(visible=True),
         )
     try:
@@ -251,7 +264,7 @@ def ui_filter_calls(
         time_from = _parse_time_value(time_from_value)
         time_to = _parse_time_value(time_to_value)
         _validate_time_range(time_from, time_to)
-        call_type = int(call_type_value) if str(call_type_value).strip() else None
+        call_type = _resolve_call_type(call_type_value)
         tenant = tenant_service.resolve(tenant_id or None)
         entries = call_log_service.list_calls(
             day,
@@ -263,7 +276,7 @@ def ui_filter_calls(
         data = [entry.raw for entry in entries]
         df = pd.DataFrame(data)
         dd = _build_dropdown(df)
-        msg = f"Знойдзена званкоў: {len(df)}"
+        msg = f"Calls found: {len(df)}"
         return df, dd, msg, gr.update(visible=False)
     except CallsAnalyserError as exc:
         return (
@@ -283,23 +296,24 @@ def ui_filter_calls(
 
 def ui_play_audio(selected_idx: Optional[int], df: pd.DataFrame, tenant_id: str):
     if selected_idx is None or df is None or df.empty:
-        return "<em>First fetch the list and select a row.</em>", None, None, ""
+        return "<em>First fetch the list and select a row.</em>", None, ""
     try:
         row = df.iloc[int(selected_idx)]
     except Exception:
-        return "<em>Invalid row selection.</em>", None, None, ""
+        return "<em>Invalid row selection.</em>", None, ""
     unique_id = str(row.get("UniqueId"))
     if not unique_id:
-        return "<em>Selected row has no UniqueId.</em>", None, None, ""
+        return "<em>Selected row has no UniqueId.</em>", None, ""
     try:
         tenant = tenant_service.resolve(tenant_id or None)
         handle = call_log_service.ensure_recording(unique_id, tenant)
-        html = f'URL: <a href="{handle.source_uri}" target="_blank">{handle.source_uri}</a>'
-        return html, handle.local_uri, handle.local_uri, "Ready ✅"
+        listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{unique_id}"
+        html = f'URL: <a href="{listen_url}" target="_blank">{listen_url}</a>'
+        return html, handle.local_uri, "Ready ✅"
     except CallsAnalyserError as exc:
-        return f"Playback failed: {exc}", None, None, ""
+        return f"Playback failed: {exc}", None, ""
     except Exception as exc:
-        return f"Playback failed: {exc}", None, None, ""
+        return f"Playback failed: {exc}", None, ""
 
 
 def ui_toggle_custom_prompt(template_key: str):
@@ -359,19 +373,19 @@ def ui_mass_analyze(
 ):
     empty_state = pd.DataFrame()
     reset_file = gr.update(value=None, visible=False)
-    progress(0, desc="Падрыхтоўка")
+    progress(0, desc="Preparing")
     if not authed:
-        return empty_state, _result_table_html([]), "", "🔒 Увядзіце пароль, каб запусціць масавы аналіз.", reset_file
+        return empty_state, _result_table_html([]), "", "🔒 Enter the password to run batch analysis.", reset_file
     if len(ai_registry) == 0 or not BATCH_MODEL_KEY:
-        return empty_state, _result_table_html([]), "", "❌ Масавы аналіз недаступны: не наладжаны AI-мадэль.", reset_file
+        return empty_state, _result_table_html([]), "", "❌ Batch analysis is unavailable: AI model is not configured.", reset_file
     if BATCH_MODEL_KEY not in ai_registry:
-        return empty_state, _result_table_html([]), "", "❌ Абраная мадэль для масавага аналізу недаступная.", reset_file
+        return empty_state, _result_table_html([]), "", "❌ Selected model for batch analysis is unavailable.", reset_file
     try:
         day = _parse_day(date_value)
         time_from = _parse_time_value(time_from_value)
         time_to = _parse_time_value(time_to_value)
         _validate_time_range(time_from, time_to)
-        call_type = int(call_type_value) if str(call_type_value).strip() else None
+        call_type = _resolve_call_type(call_type_value)
         tenant = tenant_service.resolve(tenant_id or None)
         entries = call_log_service.list_calls(
             day,
@@ -385,20 +399,20 @@ def ui_mass_analyze(
             return (
                 empty_state,
                 _result_table_html([]),
-                "Знойдзена: 0, апрацавана: 0",
-                "ℹ️ Па дадзеным фільтры званкі адсутнічаюць.",
+                "Found: 0, processed: 0",
+                "ℹ️ No calls for the selected filter.",
                 reset_file,
             )
 
         rows: list[dict[str, object]] = []
         success = 0
         for idx, entry in enumerate(entries):
-            progress(idx / total, desc=f"Аналіз {idx + 1}/{total}")
+            progress(idx / total, desc=f"Analyzing {idx + 1}/{total}")
             row_data: dict[str, object] = {
-                "Пачатак": entry.started_at.isoformat() if entry.started_at else entry.raw.get("Start", ""),
-                "Кліент": entry.caller_id or "",
-                "Напрамак": entry.destination or "",
-                "Даўжыня (с)": entry.duration_seconds,
+                "Start": entry.started_at.isoformat() if entry.started_at else entry.raw.get("Start", ""),
+                "Caller": entry.caller_id or "",
+                "Destination": entry.destination or "",
+                "Duration (s)": entry.duration_seconds,
                 "UniqueId": entry.unique_id,
             }
             handle = None
@@ -414,27 +428,45 @@ def ui_mass_analyze(
                         custom_prompt=BATCH_PROMPT_TEXT or None,
                     ),
                 )
-                link = handle.source_uri or handle.local_uri
-                row_data["Вынік"] = result.text
-                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
-                row_data["Статус"] = "✅"
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                # Parse model JSON response into two columns
+                try:
+                    text = str(result.text or "").strip()
+                    # Extract JSON object if wrapped (e.g., code fences or prefix/suffix text)
+                    l = text.find("{")
+                    r = text.rfind("}")
+                    if l != -1 and r != -1 and r > l:
+                        text = text[l : r + 1]
+                    payload = json.loads(text)
+                    needs = bool(payload.get("needs_follow_up"))
+                    reason = str(payload.get("reason") or "")
+                    row_data["Needs follow-up"] = "Yes" if needs else "No"
+                    row_data["Reason"] = reason
+                except Exception:
+                    # Fallback: keep raw text in reason if JSON parse failed
+                    row_data["Needs follow-up"] = ""
+                    row_data["Reason"] = result.text
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "✅"
                 success += 1
             except CallsAnalyserError as exc:
-                link = handle.source_uri if handle else entry.raw.get("RecordUrl", "")
-                row_data["Вынік"] = f"❌ {exc}"
-                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
-                row_data["Статус"] = "❌"
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                row_data["Needs follow-up"] = ""
+                row_data["Reason"] = f"❌ {exc}"
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "❌"
             except Exception as exc:
-                link = handle.source_uri if handle else entry.raw.get("RecordUrl", "")
-                row_data["Вынік"] = f"❌ {exc}"
-                row_data["Спасылка"] = f'<a href="{link}" target="_blank">Праслухаць</a>' if link else ""
-                row_data["Статус"] = "❌"
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                row_data["Needs follow-up"] = ""
+                row_data["Reason"] = f"❌ {exc}"
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "❌"
             rows.append(row_data)
-            progress((idx + 1) / total, desc=f"Аналіз {idx + 1}/{total}")
+            progress((idx + 1) / total, desc=f"Analyzing {idx + 1}/{total}")
 
         df = pd.DataFrame(rows)
-        summary = f"Знойдзена: {total}, апрацавана: {success}"
-        status = "✅ Масавы аналіз завершаны."
+        summary = f"Found: {total}, processed: {success}"
+        status = "✅ Batch analysis completed."
         return df, _result_table_html(rows), summary, status, reset_file
     except CallsAnalyserError as exc:
         return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
@@ -444,22 +476,22 @@ def ui_mass_analyze(
 
 def ui_export_results(results_df: pd.DataFrame):
     if results_df is None or results_df.empty:
-        return gr.update(value=None, visible=False), "❌ Няма дадзеных для экспарту."
+        return gr.update(value=None, visible=False), "❌ No data to export."
     with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
         results_df.to_csv(tmp.name, index=False)
         file_path = tmp.name
-    return gr.update(value=file_path, visible=True), "✅ Файл гатовы да захавання."
+    return gr.update(value=file_path, visible=True), "✅ File is ready to save."
 
 
 def ui_check_password(pwd: str):
     if not _UI_PASSWORD:
         return False, (
-            "⚠️ <b>VOCHI_UI_PASSWORD</b> не наладжаны ў Secrets. "
-            "Дадайце яго ў Settings → Secrets і перазапусціце Space."
+            "⚠️ <b>VOCHI_UI_PASSWORD</b> is not configured in Secrets. "
+            "Add it in Settings → Secrets and reload the Space."
         ), gr.update(visible=True)
     if (pwd or "").strip() == _UI_PASSWORD:
-        return True, "✅ Доступ адкрыты. Цяпер можна націскаць <b>Фільтр</b> і працаваць.", gr.update(visible=False)
-    return False, "❌ Няправільны пароль. Паспрабуйце яшчэ раз.", gr.update(visible=True)
+        return True, "✅ Access granted. You can now click <b>Filter</b> and proceed.", gr.update(visible=False)
+    return False, "❌ Incorrect password. Please try again.", gr.update(visible=True)
 
 
 # ----------------------------------------------------------------------------
@@ -480,7 +512,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     gr.Markdown(
         """
         # Vochi CRM → MP3 → AI analysis
-        *Фільтруйце званкі па даце, часе і тыпе, праслухоўвайце запісы і запускайце масавы AI-аналіз.*
+        *Filter calls by date, time and type, listen to recordings and run batch AI analysis.*
 
         """
     )
@@ -489,34 +521,33 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     batch_results_state = gr.State(pd.DataFrame())
 
     with gr.Group(visible=False) as pwd_group:
-        gr.Markdown("### 🔐 Увядзіце пароль")
+        gr.Markdown("### 🔐 Enter password")
         pwd_tb = gr.Textbox(label="Password", type="password", placeholder="••••••••", lines=1)
-        pwd_btn = gr.Button("Адкрыць доступ", variant="primary")
+        pwd_btn = gr.Button("Unlock", variant="primary")
 
     with gr.Tabs() as tabs:
         with gr.Tab("Vochi CRM"):
             with gr.Row():
                 tenant_tb = gr.Textbox(label="Tenant ID", value=DEFAULT_TENANT_ID, scale=1)
-                date_inp = gr.Date(label="Дата", value=_today_str(), scale=1)
-                time_from_inp = gr.Time(label="Час ад", scale=1)
-                time_to_inp = gr.Time(label="Час да", scale=1)
-                call_type_dd = gr.Dropdown(choices=CALL_TYPE_OPTIONS, value="", label="Тып званка", scale=1)
+                date_inp = gr.Textbox(label="Date", value=_today_str(), placeholder="YYYY-MM-DD", scale=1)
+                time_from_inp = gr.Textbox(label="Time from", placeholder="HH:MM", scale=1)
+                time_to_inp = gr.Textbox(label="Time to", placeholder="HH:MM", scale=1)
+                call_type_dd = gr.Dropdown(choices=CALL_TYPE_OPTIONS, value="", label="Call type", type="value", scale=1)
             with gr.Row():
-                filter_btn = gr.Button("Фільтр", variant="primary", scale=0)
-                batch_btn = gr.Button("Масавы аналіз", variant="secondary", scale=0)
-                save_btn = gr.Button("Захаваць у файл", scale=0)
+                filter_btn = gr.Button("Filter", variant="primary", scale=0)
+                batch_btn = gr.Button("Batch analyze", variant="secondary", scale=0)
+                save_btn = gr.Button("Save to file", scale=0)
             status_fetch = gr.Markdown()
-            calls_df = gr.Dataframe(value=pd.DataFrame(), label="Спіс званкоў", interactive=False)
-            row_dd = gr.Dropdown(choices=[], label="Званок", info="Абярыце радок для праслухоўвання/аналізу")
+            calls_df = gr.Dataframe(value=pd.DataFrame(), label="Call list", interactive=False)
+            row_dd = gr.Dropdown(choices=[], label="Call", info="Choose a row to listen/analyze")
             with gr.Row():
                 play_btn = gr.Button("🎧 Play")
             url_html = gr.HTML()
             audio_out = gr.Audio(label="Audio", type="filepath")
-            file_out = gr.File(label="MP3 download")
             batch_summary_md = gr.Markdown()
             batch_results_html = gr.HTML()
             batch_status_md = gr.Markdown()
-            batch_file = gr.File(label="Экспарт CSV", visible=False)
+            batch_file = gr.File(label="Export CSV", visible=False)
 
         with gr.Tab("AI Analysis"):
             with gr.Row():
@@ -554,7 +585,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     play_btn.click(
         ui_play_audio,
         inputs=[row_dd, calls_df, tenant_tb],
-        outputs=[url_html, audio_out, file_out, status_fetch],
+        outputs=[url_html, audio_out, status_fetch],
     )
 
     tpl_dd.change(ui_toggle_custom_prompt, inputs=[tpl_dd], outputs=[custom_prompt_tb])
@@ -573,4 +604,4 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(allowed_paths=["D:\\tmp"])

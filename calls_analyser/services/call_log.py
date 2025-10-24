@@ -1,7 +1,7 @@
 """Call log service."""
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, time, datetime
 from typing import List, Optional
 
 from calls_analyser.domain.models import CallLogEntry, RecordingHandle
@@ -26,8 +26,7 @@ class CallLogService:
         call_type: Optional[int] = None,
     ) -> List[CallLogEntry]:
         """Return call log entries for ``day`` with optional filters."""
-
-        return list(
+        entries = list(
             self._telephony.list_calls(
                 day=day,
                 tenant_id=tenant.tenant_id,
@@ -36,6 +35,86 @@ class CallLogService:
                 call_type=call_type,
             )
         )
+
+        # Client-side fallback filtering if server ignores params
+        def _parse_any_datetime(value: object) -> Optional[datetime]:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                s = value.strip()
+                if not s:
+                    return None
+                # Try ISO first (supports space separator too)
+                try:
+                    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+                # Try a few common formats
+                for fmt in (
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M",
+                    "%d.%m.%Y %H:%M:%S",
+                    "%d.%m.%Y %H:%M",
+                    "%Y/%m/%d %H:%M:%S",
+                    "%Y/%m/%d %H:%M",
+                ):
+                    try:
+                        return datetime.strptime(s, fmt)
+                    except ValueError:
+                        continue
+            return None
+
+        def within_time_window(entry: CallLogEntry) -> bool:
+            if not (time_from or time_to):
+                return True
+            t: Optional[time] = None
+            if entry.started_at:
+                t = entry.started_at.time().replace(microsecond=0)
+            else:
+                raw = entry.raw or {}
+                # Try multiple keys for start timestamp
+                for key in ("Start", "start", "StartedAt", "startedAt", "CreateDate", "Date", "Datetime", "DateTime", "StartTime"):
+                    start_raw = raw.get(key)
+                    dt = _parse_any_datetime(start_raw)
+                    if dt is not None:
+                        t = dt.time().replace(microsecond=0)
+                        break
+            if t is None:
+                return True  # cannot determine -> don't exclude
+            if time_from and t < time_from:
+                return False
+            if time_to and t > time_to:
+                return False
+            return True
+
+        def matches_type(entry: CallLogEntry) -> bool:
+            if call_type is None:
+                return True
+            raw = entry.raw or {}
+            # Common field variants for call type
+            for key in ("CallType", "callType", "calltype", "Type", "Direction"):
+                v = raw.get(key)
+                if v is None:
+                    continue
+                s = str(v).strip()
+                if s.isdigit():
+                    try:
+                        return int(s) == call_type
+                    except ValueError:
+                        continue
+                # Some APIs may return words; try simple mapping
+                mapping = {
+                    "incoming": 0,
+                    "in": 0,
+                    "outgoing": 1,
+                    "out": 1,
+                    "internal": 2,
+                }
+                if s.lower() in mapping:
+                    return mapping[s.lower()] == call_type
+            return True  # if unknown, do not exclude
+
+        return [e for e in entries if within_time_window(e) and matches_type(e)]
 
     def ensure_recording(self, unique_id: str, tenant: TenantConfig) -> RecordingHandle:
         """Return a handle to a locally stored recording."""
