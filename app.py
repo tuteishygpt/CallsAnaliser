@@ -165,20 +165,6 @@ except ValueError:
 
 
 # ----------------------------------------------------------------------------
-# Helper: бяспечная праца з progress
-# ----------------------------------------------------------------------------
-class _NoProgress:
-    """fallback калі progress=None у версіі Gradio."""
-    def __call__(self, *args, **kwargs):
-        return None
-
-
-def _get_progress(progress_obj):
-    """Калі progress=None -> вяртаем заглушку."""
-    return progress_obj if progress_obj is not None else _NoProgress()
-
-
-# ----------------------------------------------------------------------------
 # UI utilities
 # ----------------------------------------------------------------------------
 def _label_row(row: dict) -> str:
@@ -626,41 +612,52 @@ def ui_analyze_bridge(
     model_pref,
     tenant_id,
     current_uid,
-    progress=None,
 ):
     """
-    Аднаразовы аналіз адной размовы.
-    Тут выкарыстоўваем gradio progress (show_progress='full'), але без тыпізацый,
-    каб gradio 5 не падаліўся.
+    Аналіз адной размовы З ПРАГРЭСАМ.
+    ВАЖНА:
+    - Гэта цяпер генератар (yield), а не звычайная функцыя.
+    - Мы не выкарыстоўваем аргумент progress=... (ён ламаецца ў Gradio 5).
+    - Зрабляем некалькі крокаў:
+        1) праверкі і падрыхтоўка -> yield статычны статус
+        2) выклік аналізу -> пасля гэтага яшчэ адзін yield з вынікам
+    - Gradio сам пакажа built-in progress bar праз show_progress="full".
     """
-    safe_progress = _get_progress(progress)
-    safe_progress(0, desc="Preparing for analysis...")
 
+    # STEP 0. Вызначаем, які UID трэба аналізаваць
     uid_to_analyze = (current_uid or "").strip()
-    if not uid_to_analyze and selected_idx is not None:
+    if not uid_to_analyze and selected_idx is not None and df is not None and not df.empty:
         try:
-            uid_to_analyze = str(df.iloc[int(selected_idx)].get("UniqueId"))
+            uid_to_analyze = str(df.iloc[int(selected_idx)].get("UniqueId") or "").strip()
         except (ValueError, IndexError):
-            pass
+            uid_to_analyze = ""
 
+    # Калі няма UID -> адразу вынікаем
     if not uid_to_analyze:
-        return "Select a call from the list or batch results first."
+        yield "Select a call from the list or batch results first."
+        return
 
+    # STEP 1. Праверкі канфігурацыі перад выклікам мадэлі
     if not PROJECT_IMPORTS_AVAILABLE:
-        return "Project dependencies are not loaded."
+        yield "Project dependencies are not loaded."
+        return
 
     if len(ai_registry) == 0:
-        return "❌ No AI models are configured."
+        yield "❌ No AI models are configured."
+        return
 
     if model_pref not in ai_registry:
-        return "❌ Selected model is not available."
+        yield "❌ Selected model is not available."
+        return
 
+    # паказваем карыстальніку, што пачынаем
+    yield f"### Preparing analysis...\n\n- UID: `{uid_to_analyze}`\n- Model: `{model_pref}`\n- Lang: `{lang_code}`\n\nPlease wait…"
+
+    # STEP 2. Рэальны аналіз
     try:
-        safe_progress(0.2, desc="Resolving tenant and language...")
         tenant = tenant_service.resolve(tenant_id or None)
         lang = Language(lang_code)
 
-        safe_progress(0.5, desc="Analyzing call with AI model...")
         result = analysis_service.analyze_call(
             unique_id=uid_to_analyze,
             tenant=tenant,
@@ -672,10 +669,11 @@ def ui_analyze_bridge(
             ),
         )
 
-        safe_progress(0.9, desc="Formatting result...")
-        return f"### Analysis result\n\n{result.text}"
+        # STEP 3. Гатова, вяртаем вынік
+        yield f"### Analysis result\n\n{result.text}"
+
     except Exception as exc:
-        return f"Analysis failed: {exc}"
+        yield f"Analysis failed: {exc}"
 
 
 def ui_on_batch_row_select(
@@ -927,7 +925,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         outputs=[custom_prompt_tb],
     )
 
-    # аналіз адной размовы
+    # аналіз адной размовы з прагрэсам
     analyze_btn.click(
         fn=ui_analyze_bridge,
         inputs=[
@@ -941,7 +939,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
             current_uid_state,
         ],
         outputs=[analysis_md],
-        show_progress="full",
+        show_progress="full",  # Gradio будзе паказваць progress bar аўтаматычна
     )
 
 if __name__ == "__main__":
