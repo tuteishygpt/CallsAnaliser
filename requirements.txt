@@ -1,6 +1,6 @@
 fastapi>=0.111.0
 google-genai>=0.6.0
-gradio>=4.40.0
+gradio    #>=4.40.0
 numpy>=1.26.4
 pandas>=2.2.2
 pydantic>=2.7.0
