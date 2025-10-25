@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "calls-analyser"
+version = "0.1.0"
+description = "Hexagonal architecture tools for analysing and summarising calls."
+readme = "README.md"
+authors = [
+    { name = "tuteishygpt" }
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 :: Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "fastapi>=0.111.0",
+    "google-genai>=0.6.0",
+    "gradio>=4.40.0",
+    "numpy>=1.26.4",
+    "pandas>=2.2.2",
+    "pydantic>=2.7.0",
+    "requests>=2.31.0",
+    "soundfile>=0.12.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/tuteishygpt/calls-analyser"
