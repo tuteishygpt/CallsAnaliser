@@ -283,7 +283,7 @@ def ui_filter_calls(
 ):
     if not authed:
         return (
-            pd.DataFrame(),
+            gr.update(value=pd.DataFrame(), visible=False),
             gr.update(choices=[], value=None),
             "ðŸ”’ Enter the password to apply the filter.",
             gr.update(visible=True),
@@ -306,17 +306,17 @@ def ui_filter_calls(
         df = pd.DataFrame(data)
         dd = _build_dropdown(df)
         msg = f"Calls found: {len(df)}"
-        return df, dd, msg, gr.update(visible=False)
+        return gr.update(value=df, visible=True), dd, msg, gr.update(visible=False)
     except CallsAnalyserError as exc:
         return (
-            pd.DataFrame(),
+            gr.update(value=pd.DataFrame(), visible=True),
             gr.update(choices=[], value=None),
             f"Domain error: {exc}",
             gr.update(visible=False),
         )
     except Exception as exc:
         return (
-            pd.DataFrame(),
+            gr.update(value=pd.DataFrame(), visible=True),
             gr.update(choices=[], value=None),
             f"Load error: {exc}",
             gr.update(visible=False),
@@ -563,6 +563,13 @@ def ui_pick_first_batch_row(results_df: pd.DataFrame, tenant_id: str):
         return row_dict or {}, listen_url, dd_update, (uid or ""), ui_show_current_uid(uid or "")
     except Exception:
         return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+
+
+def ui_hide_call_list():
+    """Hide the manual call list after triggering batch analysis."""
+
+    return gr.update(visible=False)
+
 
 def ui_build_batch_pick_options(results_df: pd.DataFrame):
     """Return update for batch picker dropdown from DataFrame."""
@@ -889,6 +896,61 @@ def ui_on_batch_pick(uid: str, results_df: pd.DataFrame, tenant_id: str):
         return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
 
 
+def ui_on_batch_select(select_data, results_df: pd.DataFrame | None, tenant_id: str):
+    """Handle direct row clicks within the batch results table."""
+
+    base_df = results_df.copy() if isinstance(results_df, pd.DataFrame) else pd.DataFrame(results_df or {})
+    if base_df is None or getattr(base_df, "empty", True):
+        empty = base_df if isinstance(base_df, pd.DataFrame) else pd.DataFrame()
+        return (
+            empty,
+            empty,
+            {},
+            "",
+            gr.update(choices=[], value=None),
+            "",
+            ui_show_current_uid(""),
+        )
+
+    try:
+        idx = getattr(select_data, "index", None)
+        if isinstance(idx, (list, tuple)):
+            row_idx = idx[0]
+        else:
+            row_idx = idx
+        if row_idx is None:
+            raise ValueError
+        try:
+            pos = int(row_idx)
+            if pos < 0:
+                raise ValueError
+            target_index = base_df.index[pos]
+        except Exception:
+            target_index = row_idx if row_idx in base_df.index else None
+        if target_index is None:
+            raise ValueError
+    except Exception:
+        return (
+            base_df,
+            base_df,
+            {},
+            "",
+            gr.update(choices=[], value=None),
+            "",
+            ui_show_current_uid(""),
+        )
+
+    df = base_df.copy()
+    if "Select" in df.columns:
+        try:
+            df.loc[:, "Select"] = False
+            df.loc[target_index, "Select"] = True
+        except Exception:
+            pass
+
+    return ui_on_batch_toggle(df, df, tenant_id)
+
+
 def ui_on_batch_toggle(table_value, results_df: pd.DataFrame | None, tenant_id: str):
     """Enforce single selection via 'Select' boolean column and update dependent UI.
 
@@ -1074,6 +1136,10 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         ui_pick_first_batch_row,
         inputs=[batch_results_state, tenant_tb],
         outputs=[batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
+    ).then(
+        ui_hide_call_list,
+        inputs=[],
+        outputs=[calls_df],
     )
 
     # Additional batch controls removed; selection is via table click.
@@ -1104,6 +1170,12 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     batch_results_df.change(
         ui_on_batch_toggle,
         inputs=[batch_results_df, batch_results_state, tenant_tb],
+        outputs=[batch_results_df, batch_results_state, batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
+    )
+
+    batch_results_df.select(
+        ui_on_batch_select,
+        inputs=[batch_results_state, tenant_tb],
         outputs=[batch_results_df, batch_results_state, batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
     )
 
