@@ -73,7 +73,7 @@ class AnalysisService:
         handle = self._call_log_service.ensure_recording(unique_id, tenant)
 
         prompt_template = self._prompt_service.get_prompt(options.prompt_key)
-        prompt_body = options.custom_prompt.strip() if options.custom_prompt else prompt_template.body
+        prompt_body = custom_fragment or prompt_template.body
 
         audio_source = FileAudioSource(path=handle.local_uri)
         result = provider.analyze(audio_source, prompt_body, lang, options={"tenant_id": tenant.tenant_id})
