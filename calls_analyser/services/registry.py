@@ -1,7 +1,7 @@
 """Simple provider registry used for dependency lookups."""
 from __future__ import annotations
 
-from typing import Dict, Generic, Iterable, Iterator, MutableMapping, TypeVar
+from typing import Generic, Iterable, Iterator, MutableMapping, TypeVar
 
 T = TypeVar("T")
 
