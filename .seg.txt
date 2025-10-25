@@ -1,0 +1,3 @@
+return empty_state, _result_table_html([]), "", "🔒 Enter the password to run batch analysis.", reset_file
+    if len(ai_registry) == 0 or not BATCH_MODEL_KEY:
+        return empty_state, _result_ta

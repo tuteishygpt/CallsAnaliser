@@ -1,0 +1,112 @@
+def ui_mass_analyze(
+    date_value,
+    time_from_value,
+    time_to_value,
+    call_type_value: str,
+    tenant_id: str,
+    authed: bool,
+    progress=gr.Progress(track_tqdm=False),
+):
+    empty_state = pd.DataFrame()
+    reset_file = gr.update(value=None, visible=False)
+    progress(0, desc="Preparing")
+    if not authed:
+        return empty_state, _result_table_html([]), "", "🔒 Enter the password to run batch analysis.", reset_file
+    if len(ai_registry) == 0 or not BATCH_MODEL_KEY:
+        return empty_state, _result_table_html([]), "", "❌ Batch analysis is unavailable: AI model is not configured.", reset_file
+    if BATCH_MODEL_KEY not in ai_registry:
+        return empty_state, _result_table_html([]), "", "❌ Selected model for batch analysis is unavailable.", reset_file
+    try:
+        day = _parse_day(date_value)
+        time_from = _parse_time_value(time_from_value)
+        time_to = _parse_time_value(time_to_value)
+        _validate_time_range(time_from, time_to)
+        call_type = _resolve_call_type(call_type_value)
+        tenant = tenant_service.resolve(tenant_id or None)
+        entries = call_log_service.list_calls(
+            day,
+            tenant,
+            time_from=time_from,
+            time_to=time_to,
+            call_type=call_type,
+        )
+        total = len(entries)
+        if total == 0:
+            return (
+                empty_state,
+                _result_table_html([]),
+                "Found: 0, processed: 0",
+                "ℹ️ No calls for the selected filter.",
+                reset_file,
+            )
+
+        rows: list[dict[str, object]] = []
+        success = 0
+        for idx, entry in enumerate(entries):
+            progress(idx / total, desc=f"Analyzing {idx + 1}/{total}")
+            row_data: dict[str, object] = {
+                "Start": entry.started_at.isoformat() if entry.started_at else entry.raw.get("Start", ""),
+                "Caller": entry.caller_id or "",
+                "Destination": entry.destination or "",
+                "Duration (s)": entry.duration_seconds,
+                "UniqueId": entry.unique_id,
+            }
+            handle = None
+            try:
+                handle = call_log_service.ensure_recording(entry.unique_id, tenant)
+                result = analysis_service.analyze_call(
+                    unique_id=entry.unique_id,
+                    tenant=tenant,
+                    lang=BATCH_LANGUAGE,
+                    options=AnalysisOptions(
+                        model_key=BATCH_MODEL_KEY,
+                        prompt_key=BATCH_PROMPT_KEY,
+                        custom_prompt=BATCH_PROMPT_TEXT or None,
+                    ),
+                )
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                # Parse model JSON response into two columns
+                try:
+                    text = str(result.text or "").strip()
+                    # Extract JSON object if wrapped (e.g., code fences or prefix/suffix text)
+                    l = text.find("{")
+                    r = text.rfind("}")
+                    if l != -1 and r != -1 and r > l:
+                        text = text[l : r + 1]
+                    payload = json.loads(text)
+                    needs = bool(payload.get("needs_follow_up"))
+                    reason = str(payload.get("reason") or "")
+                    row_data["Needs follow-up"] = "Yes" if needs else "No"
+                    row_data["Reason"] = reason
+                except Exception:
+                    # Fallback: keep raw text in reason if JSON parse failed
+                    row_data["Needs follow-up"] = ""
+                    row_data["Reason"] = result.text
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "✅"
+                success += 1
+            except CallsAnalyserError as exc:
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                row_data["Needs follow-up"] = ""
+                row_data["Reason"] = f"❌ {exc}"
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "❌"
+            except Exception as exc:
+                link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
+                row_data["Needs follow-up"] = ""
+                row_data["Reason"] = f"❌ {exc}"
+                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
+                row_data["Status"] = "❌"
+            rows.append(row_data)
+            progress((idx + 1) / total, desc=f"Analyzing {idx + 1}/{total}")
+
+        df = pd.DataFrame(rows)
+        summary = f"Found: {total}, processed: {success}"
+        status = "✅ Batch analysis completed."
+        return df, _result_table_html(rows), summary, status, reset_file
+    except CallsAnalyserError as exc:
+        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+    except Exception as exc:
+        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+
+

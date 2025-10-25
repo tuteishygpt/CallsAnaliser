@@ -1,0 +1,41 @@
+def ui_analyze(
+    selected_idx: Optional[int],
+    df: pd.DataFrame,
+    template_key: str,
+    custom_prompt: str,
+    lang_code: str,
+    model_pref: str,
+    tenant_id: str,
+):
+    if df is None or df.empty or selected_idx is None:
+        return "First fetch the list, choose a call, and (optionally) click ‘🎧 Play’."
+    if len(ai_registry) == 0:
+        return "❌ No AI models are configured. Add provider credentials and reload the app."
+    if model_pref not in ai_registry:
+        return "❌ Selected model is not available. Check API key or provider configuration."
+    try:
+        row = df.iloc[int(selected_idx)]
+    except Exception:
+        return "Invalid row selection."
+    unique_id = str(row.get("UniqueId"))
+    if not unique_id:
+        return "Selected row has no UniqueId."
+    try:
+        tenant = tenant_service.resolve(tenant_id or None)
+        lang = Language(lang_code)
+        result = analysis_service.analyze_call(
+            unique_id=unique_id,
+            tenant=tenant,
+            lang=lang,
+            options=AnalysisOptions(
+                model_key=model_pref,
+                prompt_key=template_key,
+                custom_prompt=custom_prompt,
+            ),
+        )
+        return f"### Analysis result\n\n{result.text}"
+    except CallsAnalyserError as exc:
+        return f"Analysis failed: {exc}"
+    except Exception as exc:
+        return f"Analysis failed: {exc}"
+

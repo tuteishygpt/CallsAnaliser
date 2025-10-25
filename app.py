@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import tempfile
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 import json
 
 import gradio as gr
@@ -84,7 +84,7 @@ def _build_model_options() -> list[tuple[str, str]]:
             continue
         provider = ai_registry.get(model_key)
         provider_label = getattr(provider, "provider_name", model_key)
-        options.append((f"{provider_label} • {title}", model_key))
+        options.append((f"{provider_label} â€¢ {title}", model_key))
     return options
 
 
@@ -143,7 +143,7 @@ def _label_row(row: dict) -> str:
     src = row.get("CallerId", "")
     dst = row.get("Destination", "")
     dur = row.get("Duration", "")
-    return f"{start} | {src} → {dst} ({dur}s)"
+    return f"{start} | {src} â†’ {dst} ({dur}s)"
 
 
 def _parse_day(day_value) -> _dt.date:
@@ -240,6 +240,35 @@ def _result_table_html(rows: list[dict[str, object]]) -> str:
     return df.to_html(index=False, escape=False)
 
 
+def _build_batch_dropdown(df: pd.DataFrame) -> gr.Update:
+    """Build dropdown choices for batch results using UniqueId as value.
+
+    Keeps selection stable when sorting by using UniqueId instead of positional index.
+    """
+    if df is None or df.empty:
+        return gr.update(choices=[], value=None)
+    opts: List[Tuple[str, str]] = []
+    for _idx, row in df.iterrows():
+        label = f"{row.get('Start','')} | {row.get('Caller','')} -> {row.get('Destination','')} ({row.get('Duration (s)','')}s)"
+        uid = str(row.get("UniqueId", ""))
+        if uid:
+            opts.append((label, uid))
+    value = opts[0][1] if opts else None
+    return gr.update(choices=opts, value=value)
+
+
+def _sort_dataframe(df: pd.DataFrame, sort_key: str, ascending: bool) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if sort_key not in df.columns:
+        return df
+    try:
+        # Stable sort to keep order of equal elements
+        return df.sort_values(by=sort_key, ascending=ascending, kind="mergesort")
+    except Exception:
+        return df
+
+
 # ----------------------------------------------------------------------------
 # Gradio handlers
 # ----------------------------------------------------------------------------
@@ -256,7 +285,7 @@ def ui_filter_calls(
         return (
             pd.DataFrame(),
             gr.update(choices=[], value=None),
-            "🔒 Enter the password to apply the filter.",
+            "ðŸ”’ Enter the password to apply the filter.",
             gr.update(visible=True),
         )
     try:
@@ -295,6 +324,24 @@ def ui_filter_calls(
 
 
 def ui_play_audio(selected_idx: Optional[int], df: pd.DataFrame, tenant_id: str):
+    # Allow passing UniqueId directly via dropdown value (string)
+    try:
+        if selected_idx is not None and not str(selected_idx).strip().lstrip('-').isdigit():
+            unique_id = str(selected_idx).strip()
+            if not unique_id:
+                return "<em>Selected item has no UniqueId.</em>", None, ""
+            try:
+                tenant = tenant_service.resolve(tenant_id or None)
+                handle = call_log_service.ensure_recording(unique_id, tenant)
+                listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{unique_id}"
+                html = f'URL: <a href="{listen_url}" target="_blank">{listen_url}</a>'
+                return html, handle.local_uri, "Ready"
+            except CallsAnalyserError as exc:
+                return f"Playback failed: {exc}", None, ""
+            except Exception as exc:
+                return f"Playback failed: {exc}", None, ""
+    except Exception:
+        pass
     if selected_idx is None or df is None or df.empty:
         return "<em>First fetch the list and select a row.</em>", None, ""
     try:
@@ -309,7 +356,7 @@ def ui_play_audio(selected_idx: Optional[int], df: pd.DataFrame, tenant_id: str)
         handle = call_log_service.ensure_recording(unique_id, tenant)
         listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{unique_id}"
         html = f'URL: <a href="{listen_url}" target="_blank">{listen_url}</a>'
-        return html, handle.local_uri, "Ready ✅"
+        return html, handle.local_uri, "Ready âœ…"
     except CallsAnalyserError as exc:
         return f"Playback failed: {exc}", None, ""
     except Exception as exc:
@@ -330,11 +377,11 @@ def ui_analyze(
     tenant_id: str,
 ):
     if df is None or df.empty or selected_idx is None:
-        return "First fetch the list, choose a call, and (optionally) click ‘🎧 Play’."
+        return "First fetch the list, choose a call, and (optionally) click â€˜ðŸŽ§ Playâ€™."
     if len(ai_registry) == 0:
-        return "❌ No AI models are configured. Add provider credentials and reload the app."
+        return "âŒ No AI models are configured. Add provider credentials and reload the app."
     if model_pref not in ai_registry:
-        return "❌ Selected model is not available. Check API key or provider configuration."
+        return "âŒ Selected model is not available. Check API key or provider configuration."
     try:
         row = df.iloc[int(selected_idx)]
     except Exception:
@@ -375,11 +422,11 @@ def ui_mass_analyze(
     reset_file = gr.update(value=None, visible=False)
     progress(0, desc="Preparing")
     if not authed:
-        return empty_state, _result_table_html([]), "", "🔒 Enter the password to run batch analysis.", reset_file
+        return empty_state, pd.DataFrame(), "", "ðŸ”’ Enter the password to run batch analysis.", reset_file
     if len(ai_registry) == 0 or not BATCH_MODEL_KEY:
-        return empty_state, _result_table_html([]), "", "❌ Batch analysis is unavailable: AI model is not configured.", reset_file
+        return empty_state, pd.DataFrame(), "", "âŒ Batch analysis is unavailable: AI model is not configured.", reset_file
     if BATCH_MODEL_KEY not in ai_registry:
-        return empty_state, _result_table_html([]), "", "❌ Selected model for batch analysis is unavailable.", reset_file
+        return empty_state, pd.DataFrame(), "", "âŒ Selected model for batch analysis is unavailable.", reset_file
     try:
         day = _parse_day(date_value)
         time_from = _parse_time_value(time_from_value)
@@ -396,11 +443,9 @@ def ui_mass_analyze(
         )
         total = len(entries)
         if total == 0:
-            return (
-                empty_state,
-                _result_table_html([]),
+            return (empty_state, pd.DataFrame(),
                 "Found: 0, processed: 0",
-                "ℹ️ No calls for the selected filter.",
+                "â„¹ï¸ No calls for the selected filter.",
                 reset_file,
             )
 
@@ -414,6 +459,7 @@ def ui_mass_analyze(
                 "Destination": entry.destination or "",
                 "Duration (s)": entry.duration_seconds,
                 "UniqueId": entry.unique_id,
+                "Select": False,
             }
             handle = None
             try:
@@ -447,51 +493,99 @@ def ui_mass_analyze(
                     row_data["Needs follow-up"] = ""
                     row_data["Reason"] = result.text
                 row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
-                row_data["Status"] = "✅"
+                row_data["Status"] = "âœ…"
                 success += 1
             except CallsAnalyserError as exc:
                 link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
                 row_data["Needs follow-up"] = ""
-                row_data["Reason"] = f"❌ {exc}"
+                row_data["Reason"] = f"âŒ {exc}"
                 row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
-                row_data["Status"] = "❌"
+                row_data["Status"] = "âŒ"
             except Exception as exc:
                 link = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{entry.unique_id}"
                 row_data["Needs follow-up"] = ""
-                row_data["Reason"] = f"❌ {exc}"
+                row_data["Reason"] = f"âŒ {exc}"
                 row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
-                row_data["Status"] = "❌"
+                row_data["Status"] = "âŒ"
             rows.append(row_data)
             progress((idx + 1) / total, desc=f"Analyzing {idx + 1}/{total}")
 
         df = pd.DataFrame(rows)
+        # Ensure boolean dtype for checkbox column
+        try:
+            if "Select" in df.columns:
+                df["Select"] = df["Select"].astype(bool)
+        except Exception:
+            pass
+        # Auto-select the first row for user convenience
+        try:
+            if not df.empty:
+                df.loc[:, "Select"] = False
+                df.loc[0, "Select"] = True
+        except Exception:
+            pass
+        # Put 'Select' as the first column for easier mouse clicking
+        try:
+            if "Select" in df.columns:
+                cols = ["Select"] + [c for c in df.columns if c != "Select"]
+                df = df.loc[:, cols]
+        except Exception:
+            pass
         summary = f"Found: {total}, processed: {success}"
-        status = "✅ Batch analysis completed."
-        return df, _result_table_html(rows), summary, status, reset_file
+        status = "âœ… Batch analysis completed."
+        return df, df, summary, status, reset_file
     except CallsAnalyserError as exc:
-        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+        return empty_state, empty_state, "", f"Analysis failed: {exc}", reset_file
     except Exception as exc:
-        return empty_state, _result_table_html([]), "", f"Analysis failed: {exc}", reset_file
+        return empty_state, empty_state, "", f"Analysis failed: {exc}", reset_file
 
+
+def ui_pick_first_batch_row(results_df: pd.DataFrame, tenant_id: str):
+    """Auto-select the first row after batch analysis and update dependent UI."""
+    try:
+        if results_df is None or getattr(results_df, "empty", True):
+            return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+        row = results_df.iloc[0]
+        row_dict: Dict[str, object] = {k: row.get(k) for k in results_df.columns}
+        uid = str(row.get("UniqueId", "")).strip()
+        listen_url = ""
+        if uid:
+            try:
+                tenant = tenant_service.resolve(tenant_id or None)
+                listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{uid}"
+            except Exception:
+                listen_url = ""
+        try:
+            label = f"{row_dict.get('Start','')} | {row_dict.get('Caller','')} -> {row_dict.get('Destination','')} ({row_dict.get('Duration (s)','')}s)"
+        except Exception:
+            label = uid or "Selected"
+        dd_update = gr.update(choices=[(f"Batch: {label}", uid or "")], value=(uid or None))
+        return row_dict or {}, listen_url, dd_update, (uid or ""), ui_show_current_uid(uid or "")
+    except Exception:
+        return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+
+def ui_build_batch_pick_options(results_df: pd.DataFrame):
+    """Return update for batch picker dropdown from DataFrame."""
+    return _build_batch_dropdown(results_df if isinstance(results_df, pd.DataFrame) else pd.DataFrame())
 
 def ui_export_results(results_df: pd.DataFrame):
     if results_df is None or results_df.empty:
-        return gr.update(value=None, visible=False), "❌ No data to export."
+        return gr.update(value=None, visible=False), "âŒ No data to export."
     with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8") as tmp:
         results_df.to_csv(tmp.name, index=False)
         file_path = tmp.name
-    return gr.update(value=file_path, visible=True), "✅ File is ready to save."
+    return gr.update(value=file_path, visible=True), "âœ… File is ready to save."
 
 
 def ui_check_password(pwd: str):
     if not _UI_PASSWORD:
         return False, (
-            "⚠️ <b>VOCHI_UI_PASSWORD</b> is not configured in Secrets. "
-            "Add it in Settings → Secrets and reload the Space."
+            "âš ï¸ <b>VOCHI_UI_PASSWORD</b> is not configured in Secrets. "
+            "Add it in Settings â†’ Secrets and reload the Space."
         ), gr.update(visible=True)
     if (pwd or "").strip() == _UI_PASSWORD:
-        return True, "✅ Access granted. You can now click <b>Filter</b> and proceed.", gr.update(visible=False)
-    return False, "❌ Incorrect password. Please try again.", gr.update(visible=True)
+        return True, "âœ… Access granted. You can now click <b>Filter</b> and proceed.", gr.update(visible=False)
+    return False, "âŒ Incorrect password. Please try again.", gr.update(visible=True)
 
 
 # ----------------------------------------------------------------------------
@@ -499,6 +593,381 @@ def ui_check_password(pwd: str):
 # ----------------------------------------------------------------------------
 _UI_PASSWORD = os.environ.get("VOCHI_UI_PASSWORD", "")
 
+
+# ----------------------------------------------------------------------------
+# Extra handlers: batch sorting, AI bridge, chat
+# ----------------------------------------------------------------------------
+
+
+def ui_init_batch_controls(results_df: pd.DataFrame):
+    """Initialize sort and selection controls after mass analysis."""
+    if results_df is None or results_df.empty:
+        return gr.update(choices=[], value=None), gr.update(choices=[], value=None)
+    sort_cols = list(results_df.columns)
+    default_col = "Needs follow-up" if "Needs follow-up" in sort_cols else sort_cols[0]
+    return gr.update(choices=sort_cols, value=default_col), _build_batch_dropdown(results_df)
+
+
+def ui_sort_batch_results(sort_key: str, order_label: str, results_df: pd.DataFrame):
+    """Sort batch results and update views and selection."""
+    if results_df is None or results_df.empty:
+        return results_df, results_df, gr.update(choices=[], value=None)
+    ascending = (str(order_label).strip().lower() == "ascending")
+    sorted_df = _sort_dataframe(results_df, sort_key, ascending)
+    return sorted_df, sorted_df, _build_batch_dropdown(sorted_df)
+
+
+def ui_filter_batch_results(filter_col: str, query: str, results_df: pd.DataFrame):
+    """Filter batch results by substring match in selected column or all."""
+    if results_df is None or results_df.empty:
+        return results_df, gr.update(choices=[], value=None)
+    squery = (query or "").strip()
+    if not squery:
+        return results_df, _build_batch_dropdown(results_df)
+    try:
+        if filter_col and filter_col in results_df.columns and filter_col != "*All*":
+            mask = results_df[filter_col].astype(str).str.contains(squery, case=False, na=False)
+        else:
+            # any column contains
+            mask = results_df.astype(str).apply(lambda col: col.str.contains(squery, case=False, na=False))
+            mask = mask.any(axis=1)
+        filtered = results_df[mask].reset_index(drop=True)
+    except Exception:
+        filtered = results_df
+    return filtered, _build_batch_dropdown(filtered)
+
+
+def ui_on_batch_select(table_value=None, results_df: pd.DataFrame | None = None, tenant_id: str = "", evt: gr.SelectData | None = None):
+    """Handle DataFrame selection; return row JSON, audio URL, and set AI UID.
+
+    Robust to different Gradio event payloads; uses stored DataFrame state.
+    """
+    # Prefer full row payload if Gradio provides it
+    row_values = None
+    try:
+        if evt is not None:
+            row_values = getattr(evt, "row_value", None)
+            if row_values is None and isinstance(evt, dict):
+                row_values = evt.get("row_value")
+    except Exception:
+        row_values = None
+    # Resolve row index from event
+    row_index = None
+    try:
+        if evt is not None:
+            # Gradio SelectData typically has .index = (row, col)
+            idx_raw = getattr(evt, "index", None)
+            if isinstance(idx_raw, (list, tuple)) and idx_raw:
+                row_index = int(idx_raw[0])
+            elif isinstance(idx_raw, int):
+                row_index = idx_raw
+            # Some versions expose .row
+            if row_index is None:
+                row_attr = getattr(evt, "row", None)
+                if isinstance(row_attr, int):
+                    row_index = row_attr
+    except Exception:
+        row_index = None
+
+    # Ensure we have a DataFrame when we don't have row_values
+    if results_df is None and table_value is None and row_values is None:
+        return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+    if not isinstance(results_df, pd.DataFrame):
+        try:
+            results_df = pd.DataFrame(results_df)
+        except Exception:
+            results_df = pd.DataFrame()
+    if row_index is None and row_values is None:
+        return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+
+    # Build row dict
+    row_dict: Dict[str, object] = {}
+    uid = ""
+    try:
+        # 1) Use evt.row_value when available
+        if row_values is not None:
+            cols = list(results_df.columns) if isinstance(results_df, pd.DataFrame) else []
+            if not cols and hasattr(table_value, "columns"):
+                try:
+                    cols = list(getattr(table_value, "columns"))
+                except Exception:
+                    cols = []
+            if cols and isinstance(row_values, (list, tuple)):
+                n = min(len(cols), len(row_values))
+                row_dict = {cols[i]: row_values[i] for i in range(n)}
+            else:
+                # Fallback: positional mapping
+                try:
+                    values_list = list(row_values)
+                except Exception:
+                    values_list = []
+                row_dict = {str(i): v for i, v in enumerate(values_list)}
+            uid = str(row_dict.get("UniqueId", "")).strip()
+        # 2) Fallback to DataFrame by row index
+        elif not getattr(results_df, "empty", True):
+            row = results_df.iloc[int(row_index)]
+            row_dict = {k: row.get(k) for k in results_df.columns}
+            uid = str(row.get("UniqueId", "")).strip()
+        # 3) Fallback to table value list-of-rows
+        elif table_value is not None:
+            try:
+                values = table_value[int(row_index)] if isinstance(table_value, list) else None
+                if values is not None and hasattr(results_df, "columns") and len(results_df.columns) == len(values):
+                    cols = list(results_df.columns)
+                    row_dict = {cols[i]: values[i] for i in range(len(cols))}
+                    uid = str(row_dict.get("UniqueId", "")).strip()
+            except Exception:
+                pass
+    except Exception:
+        row_dict = row_dict or {}
+        uid = uid or ""
+
+    # Build audio listen URL using tenant config (only if UID present)
+    listen_url = ""
+    if uid:
+        try:
+            tenant = tenant_service.resolve(tenant_id or None)
+            listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{uid}"
+        except Exception:
+            listen_url = ""
+
+    # Prepare dropdown value to reuse existing "Call" selector
+    try:
+        label = f"{row_dict.get('Start','')} | {row_dict.get('Caller','')} -> {row_dict.get('Destination','')} ({row_dict.get('Duration (s)','')}s)"
+    except Exception:
+        label = uid
+    dd_update = gr.update(choices=[(f"Batch: {label}", uid or "")], value=(uid or None))
+
+    return row_dict or {}, listen_url, dd_update, (uid or ""), ui_show_current_uid(uid or "")
+
+
+def ui_send_to_ai(selected_uid: Optional[str], current_uid: Optional[str] = ""):
+    """Bridge selected batch UniqueId to AI Analysis tab via state."""
+    uid = (selected_uid or current_uid or "").strip()
+    if not uid:
+        return "No batch item selected.", ""
+    return f"Sent to AI Analysis: {uid}", uid
+
+
+def ui_show_current_uid(current_uid: str):
+    if not (current_uid or "").strip():
+        return "No file selected for AI Analysis."
+    return f"**Selected UniqueId:** `{(current_uid or '').strip()}`"
+
+
+def ui_analyze_bridge(
+    selected_idx: Optional[int],
+    df: pd.DataFrame,
+    template_key: str,
+    custom_prompt: str,
+    lang_code: str,
+    model_pref: str,
+    tenant_id: str,
+    current_uid: str,
+):
+    """Analyze using current_uid if present, else delegate to ui_analyze."""
+    uid = (current_uid or "").strip()
+    if uid:
+        if len(ai_registry) == 0:
+            return "ï¿½?O No AI models are configured. Add provider credentials and reload the app."
+        if model_pref not in ai_registry:
+            return "ï¿½?O Selected model is not available. Check API key or provider configuration."
+        try:
+            tenant = tenant_service.resolve(tenant_id or None)
+            lang = Language(lang_code)
+            result = analysis_service.analyze_call(
+                unique_id=uid,
+                tenant=tenant,
+                lang=lang,
+                options=AnalysisOptions(
+                    model_key=model_pref,
+                    prompt_key=template_key,
+                    custom_prompt=custom_prompt,
+                ),
+            )
+            return f"### Analysis result\n\n{result.text}"
+        except CallsAnalyserError as exc:
+            return f"Analysis failed: {exc}"
+        except Exception as exc:
+            return f"Analysis failed: {exc}"
+    # Fallback to existing row-based handler
+    return ui_analyze(selected_idx, df, template_key, custom_prompt, lang_code, model_pref, tenant_id)
+
+
+def ui_chat_send(
+    message: str,
+    current_uid: str,
+    template_key: str,
+    custom_prompt: str,
+    lang_code: str,
+    model_pref: str,
+    tenant_id: str,
+    chat_histories: Dict[str, List[Tuple[str, str]]],
+):
+    uid = (current_uid or "").strip()
+    if not uid:
+        return [], chat_histories, "Select a file first."
+    if not (message or "").strip():
+        history = chat_histories.get(uid, [])
+        return history, chat_histories, ""
+    if len(ai_registry) == 0 or model_pref not in ai_registry:
+        history = chat_histories.get(uid, [])
+        return history, chat_histories, "AI model not available."
+    # Build a conversational prompt that references the audio call.
+    prev = chat_histories.get(uid, [])
+    convo = "\n".join([f"User: {u}\nAssistant: {a}" for (u, a) in prev])
+    base = custom_prompt if template_key == "custom" and custom_prompt else ""
+    prompt = (
+        f"You are assisting with analysis of a phone call (UniqueId: {uid}).\n"
+        f"Answer the user's question based on the call audio and any prior context.\n"
+        f"If the question asks to summarize or extract details, do so concisely.\n\n"
+        f"Conversation so far (if any):\n{convo}\n\n"
+        f"User question: {message}\n\n"
+        f"Additional instructions: {base}"
+    ).strip()
+    try:
+        tenant = tenant_service.resolve(tenant_id or None)
+        lang = Language(lang_code)
+        result = analysis_service.analyze_call(
+            unique_id=uid,
+            tenant=tenant,
+            lang=lang,
+            options=AnalysisOptions(
+                model_key=model_pref,
+                prompt_key="custom",
+                custom_prompt=prompt,
+            ),
+        )
+        assistant_text = (result.text or "").strip()
+    except Exception as exc:
+        assistant_text = f"Chat failed: {exc}"
+    # Update history
+    new_history = prev + [(message, assistant_text)]
+    chat_histories[uid] = new_history
+    return new_history, chat_histories, ""
+
+
+def ui_chat_clear(current_uid: str, chat_histories: Dict[str, List[Tuple[str, str]]]):
+    uid = (current_uid or "").strip()
+    if not uid:
+        return [], chat_histories
+    chat_histories[uid] = []
+    return [], chat_histories
+
+
+# ----------------------------------------------------------------------------
+# Batch fallback picker by UniqueId
+# ----------------------------------------------------------------------------
+def ui_on_batch_pick(uid: str, results_df: pd.DataFrame, tenant_id: str):
+    """Select batch row by UniqueId (dropdown fallback)."""
+    try:
+        if results_df is None or getattr(results_df, "empty", True):
+            return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+        suid = (uid or "").strip()
+        if not suid:
+            return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+        # locate row by UniqueId
+        try:
+            row = results_df.loc[results_df["UniqueId"].astype(str) == suid].iloc[0]
+        except Exception:
+            return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+        row_dict: Dict[str, object] = {k: row.get(k) for k in results_df.columns}
+        listen_url = ""
+        try:
+            tenant = tenant_service.resolve(tenant_id or None)
+            listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{suid}"
+        except Exception:
+            listen_url = ""
+        # Reuse main Call dropdown as well
+        try:
+            label = f"{row_dict.get('Start','')} | {row_dict.get('Caller','')} -> {row_dict.get('Destination','')} ({row_dict.get('Duration (s)','')}s)"
+        except Exception:
+            label = suid
+        dd_update = gr.update(choices=[(f"Batch: {label}", suid)], value=suid)
+        return row_dict, listen_url, dd_update, suid, ui_show_current_uid(suid)
+    except Exception:
+        return {}, "", gr.update(choices=[], value=None), "", ui_show_current_uid("")
+
+
+def ui_on_batch_toggle(table_value, results_df: pd.DataFrame | None, tenant_id: str):
+    """Enforce single selection via 'Select' boolean column and update dependent UI.
+
+    Returns: updated_df, updated_state_df, row_json, audio_url, call_dd_update, current_uid, current_uid_md
+    """
+    # Normalize to DataFrame
+    try:
+        df = table_value if isinstance(table_value, pd.DataFrame) else pd.DataFrame(table_value)
+    except Exception:
+        df = pd.DataFrame()
+
+    if df is None or getattr(df, "empty", True) or "Select" not in df.columns:
+        # Clear selection
+        return (
+            df,
+            df,
+            {},
+            "",
+            gr.update(choices=[], value=None),
+            "",
+            ui_show_current_uid(""),
+        )
+
+    # Find selected rows
+    sel_idx = []
+    try:
+        sel_mask = df["Select"].astype(bool)
+        sel_idx = list(df.index[sel_mask])
+    except Exception:
+        sel_idx = []
+
+    # Enforce single selection: keep only the first selected row
+    selected_row_idx = None
+    if sel_idx:
+        selected_row_idx = sel_idx[0]
+        try:
+            df.loc[:, "Select"] = False
+            df.loc[selected_row_idx, "Select"] = True
+        except Exception:
+            pass
+    else:
+        # Nothing selected
+        try:
+            df.loc[:, "Select"] = False
+        except Exception:
+            pass
+        return (
+            df,
+            df,
+            {},
+            "",
+            gr.update(choices=[], value=None),
+            "",
+            ui_show_current_uid(""),
+        )
+
+    # Build outputs from the selected row
+    try:
+        row = df.loc[selected_row_idx]
+        row_dict: Dict[str, object] = {k: row.get(k) for k in df.columns if k != "Select" or True}
+        uid = str(row.get("UniqueId", "")).strip()
+    except Exception:
+        row_dict, uid = {}, ""
+
+    listen_url = ""
+    if uid:
+        try:
+            tenant = tenant_service.resolve(tenant_id or None)
+            listen_url = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{uid}"
+        except Exception:
+            listen_url = ""
+
+    try:
+        label = f"{row_dict.get('Start','')} | {row_dict.get('Caller','')} -> {row_dict.get('Destination','')} ({row_dict.get('Duration (s)','')}s)"
+    except Exception:
+        label = uid or "Selected"
+    dd_update = gr.update(choices=[(f"Batch: {label}", uid or "")], value=(uid or None))
+
+    return df, df, (row_dict or {}), listen_url, dd_update, (uid or ""), ui_show_current_uid(uid or "")
 
 # ----------------------------------------------------------------------------
 # Build Gradio UI
@@ -511,7 +980,7 @@ def _today_str():
 with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     gr.Markdown(
         """
-        # Vochi CRM → MP3 → AI analysis
+        # Vochi CRM â†’ MP3 â†’ AI analysis
         *Filter calls by date, time and type, listen to recordings and run batch AI analysis.*
 
         """
@@ -519,10 +988,12 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
 
     authed = gr.State(False)
     batch_results_state = gr.State(pd.DataFrame())
+    current_uid_state = gr.State("")
+    chat_histories_state = gr.State({})
 
     with gr.Group(visible=False) as pwd_group:
-        gr.Markdown("### 🔐 Enter password")
-        pwd_tb = gr.Textbox(label="Password", type="password", placeholder="••••••••", lines=1)
+        gr.Markdown("### ðŸ” Enter password")
+        pwd_tb = gr.Textbox(label="Password", type="password", placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢", lines=1)
         pwd_btn = gr.Button("Unlock", variant="primary")
 
     with gr.Tabs() as tabs:
@@ -539,13 +1010,19 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
                 save_btn = gr.Button("Save to file", scale=0)
             status_fetch = gr.Markdown()
             calls_df = gr.Dataframe(value=pd.DataFrame(), label="Call list", interactive=False)
-            row_dd = gr.Dropdown(choices=[], label="Call", info="Choose a row to listen/analyze")
+            row_dd = gr.Dropdown(choices=[], label="Call", info="Choose a row to listen/analyze", type="value")
             with gr.Row():
-                play_btn = gr.Button("🎧 Play")
+                play_btn = gr.Button("ðŸŽ§ Play")
             url_html = gr.HTML()
             audio_out = gr.Audio(label="Audio", type="filepath")
             batch_summary_md = gr.Markdown()
-            batch_results_html = gr.HTML()
+            batch_results_df = gr.Dataframe(value=pd.DataFrame(), label="Batch results", interactive=True)
+            # Display selection details from table clicks
+            batch_selected_json = gr.JSON(label="Selected row")
+            batch_audio_url_tb = gr.Textbox(label="Audio link (UniqueId)")
+            # Alternative selection if click doesn't work reliably
+            batch_pick_dd = gr.Dropdown(choices=[], label="Batch pick", info="Pick a row if table click fails", type="value")
+            # Batch results controls removed per user request. Now use table click only.
             batch_status_md = gr.Markdown()
             batch_file = gr.File(label="Export CSV", visible=False)
 
@@ -561,8 +1038,15 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
                     info=MODEL_INFO,
                 )
             custom_prompt_tb = gr.Textbox(label="Custom prompt", lines=8, visible=False)
-            analyze_btn = gr.Button("🧠 Analyze", variant="primary")
+            current_uid_md = gr.Markdown()
+            analyze_btn = gr.Button("ðŸ§  Analyze", variant="primary")
             analysis_md = gr.Markdown()
+            gr.Markdown("### Chat")
+            chatbot = gr.Chatbot(label="Chat for selected file", type="tuples")
+            chat_msg_tb = gr.Textbox(label="Message", lines=2)
+            with gr.Row():
+                chat_send_btn = gr.Button("Send", variant="secondary")
+                chat_clear_btn = gr.Button("Clear chat")
 
     filter_btn.click(
         ui_filter_calls,
@@ -576,11 +1060,23 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         outputs=[authed, status_fetch, pwd_group],
     )
 
+    # Run batch and then auto-select the first row
     batch_btn.click(
         ui_mass_analyze,
         inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
-        outputs=[batch_results_state, batch_results_html, batch_summary_md, batch_status_md, batch_file],
+        outputs=[batch_results_state, batch_results_df, batch_summary_md, batch_status_md, batch_file],
+    ).then(
+        # Populate alternative picker dropdown
+        ui_build_batch_pick_options,
+        inputs=[batch_results_state],
+        outputs=[batch_pick_dd],
+    ).then(
+        ui_pick_first_batch_row,
+        inputs=[batch_results_state, tenant_tb],
+        outputs=[batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
     )
+
+    # Additional batch controls removed; selection is via table click.
 
     play_btn.click(
         ui_play_audio,
@@ -591,8 +1087,8 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     tpl_dd.change(ui_toggle_custom_prompt, inputs=[tpl_dd], outputs=[custom_prompt_tb])
 
     analyze_btn.click(
-        ui_analyze,
-        inputs=[row_dd, calls_df, tpl_dd, custom_prompt_tb, lang_dd, model_dd, tenant_tb],
+        ui_analyze_bridge,
+        inputs=[row_dd, calls_df, tpl_dd, custom_prompt_tb, lang_dd, model_dd, tenant_tb, current_uid_state],
         outputs=[analysis_md],
     )
 
@@ -602,6 +1098,38 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         outputs=[batch_file, batch_status_md],
     )
 
+    # Sort/filter controls removed per request.
+
+    # Selection via checkbox column in the table (single-select)
+    batch_results_df.change(
+        ui_on_batch_toggle,
+        inputs=[batch_results_df, batch_results_state, tenant_tb],
+        outputs=[batch_results_df, batch_results_state, batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
+    )
+
+    # Fallback: choose via dropdown by UniqueId
+    batch_pick_dd.change(
+        ui_on_batch_pick,
+        inputs=[batch_pick_dd, batch_results_state, tenant_tb],
+        outputs=[batch_selected_json, batch_audio_url_tb, row_dd, current_uid_state, current_uid_md],
+    )
+
+    # Direct table click selects file for AI Analysis; no button needed.
+
+    # Chat wiring
+    chat_send_btn.click(
+        ui_chat_send,
+        inputs=[chat_msg_tb, current_uid_state, tpl_dd, custom_prompt_tb, lang_dd, model_dd, tenant_tb, chat_histories_state],
+        outputs=[chatbot, chat_histories_state, batch_status_md],
+    )
+    chat_clear_btn.click(
+        ui_chat_clear,
+        inputs=[current_uid_state, chat_histories_state],
+        outputs=[chatbot, chat_histories_state],
+    )
+
 
 if __name__ == "__main__":
     demo.launch(allowed_paths=["D:\\tmp"])
+
+
