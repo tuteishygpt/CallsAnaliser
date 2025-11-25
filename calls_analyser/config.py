@@ -126,12 +126,17 @@ BATCH_LANGUAGE_CODE = "ru"
 # Custom batch prompt configuration
 # ---------------------------
 BATCH_CUSTOM_CONDITIONS_DEFAULT = (
-    """A call requires follow-up or extra attention when any of the following is true:\n"
-    "- The client sounds dissatisfied, complains, or expresses negative emotions.\n"
-    "- The client asks to be called back or requests information but does not get a clear answer.\n"
-    "- The employee cannot help, gives incomplete information, or ends the call abruptly.\n"
-    "- The client reports problems with booking, payment, or test results.\n"
-    "- The conversation seems incomplete, interrupted, or unresolved."""
+    """A call requires follow-up or extra attention when any of the following is true:
+
+The client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.
+
+The client asks to be called back or requests information but does not receive a clear answer.
+
+The employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.
+
+The client reports problems with booking, payment, or test results.
+
+The conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability."""
 )
 
 BATCH_CUSTOM_PROMPT_TEMPLATE = (

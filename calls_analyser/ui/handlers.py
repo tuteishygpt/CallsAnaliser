@@ -162,7 +162,6 @@ class UIHandlers:
         preview = self.build_custom_batch_prompt(clean_value)
         return (
             gr.update(value=clean_value),
-            preview,
             gr.update(visible=True),
         )
 
@@ -323,8 +322,22 @@ class UIHandlers:
                         )
                         row_data["Reason"] = str(payload.get("reason") or "")
                     except Exception:
-                        row_data["Needs follow-up"] = ""
-                        row_data["Reason"] = result.text
+                        # Fallback for text format "Needs follow-up: Yes/No Summary: ..."
+                        text_clean = str(result.text or "").strip()
+                        if "Needs follow-up:" in text_clean:
+                            try:
+                                parts = text_clean.split("Summary:", 1)
+                                nf_part = parts[0].replace("Needs follow-up:", "").strip()
+                                summary_part = parts[1].strip() if len(parts) > 1 else ""
+                                
+                                row_data["Needs follow-up"] = nf_part
+                                row_data["Reason"] = summary_part
+                            except Exception:
+                                row_data["Needs follow-up"] = ""
+                                row_data["Reason"] = text_clean
+                        else:
+                            row_data["Needs follow-up"] = ""
+                            row_data["Reason"] = text_clean
 
                     row_data["Link"] = (
                         f'<a href="{link}" target="_blank">Listen</a>'
