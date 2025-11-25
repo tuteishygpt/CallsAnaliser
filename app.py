@@ -75,7 +75,7 @@ MODEL_CANDIDATES = CFG_MODEL_CANDIDATES if PROJECT_IMPORTS_AVAILABLE else []
 # ----------------------------------------------------------------------------
 # Dependency wiring
 # ----------------------------------------------------------------------------
-DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "default")
+DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "Amedis")
 DEFAULT_BASE_URL = os.environ.get("VOCHI_BASE_URL", "https://crm.vochi.by/api")
 
 if not PROJECT_IMPORTS_AVAILABLE:
@@ -337,7 +337,6 @@ def ui_filter_calls(
 
 def ui_play_audio(selected_idx, df, tenant_id):
     """Прайграць аўдыё па выбраным радку.
-
     Лагіка:
     - калі selected_idx выглядае як UID (не лічба) -> гуляем яго;
     - калі гэта індэкс радка -> шукаем у df і бярэм UniqueId.
@@ -369,7 +368,8 @@ def ui_play_audio(selected_idx, df, tenant_id):
             f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
             f"{tenant.vochi_client_id}/{unique_id}"
         )
-        html = f'URL: <a href="{listen_url}" target="_blank">{listen_url}</a>'
+        # ВЫПРАЎЛЕНА: Дадаем унікальны ID для JavaScript
+        html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
 
         return html, handle.local_uri, "Ready ✅"
     except Exception as exc:
@@ -515,7 +515,8 @@ def ui_mass_analyze(
                     row_data["Needs follow-up"] = ""
                     row_data["Reason"] = result.text
 
-                row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>'
+                # ВЫПРАЎЛЕНА: Дадаем клас для JavaScript, каб зрабіць спасылку ў новай укладцы
+                row_data["Link"] = f'<a href="{link}" class="new-tab-link">Listen</a>'
                 row_data["Status"] = "✅"
             except Exception as exc:
                 row_data["Needs follow-up"] = ""
@@ -684,19 +685,18 @@ def ui_on_batch_row_select(
 ):
     """
     Апрацоўвае выбар радка з табліцы вынікаў (Batch results).
-    ВАЖНА:
-      - evt.index дае індэкс радка ў адлюстраванай табліцы (пасля сартыроўкі/фільтрацыі),
-        а не ў зыходных дадзеных.
-      - Мы дастаём UniqueId з гэтага радка і будуем адзін варыянт для выпадаючага спісу "Call".
+    ВЫПРАЎЛЕНА: Цяпер гэтая функцыя таксама адразу абнаўляе плэер.
     """
     # Значэнні па змаўчанні, калі нешта пойдзе не так
     empty_return = (
-        gr.update(choices=[], value=None),
-        "",
-        "No file selected for AI Analysis.",
+        gr.update(choices=[], value=None), # row_dd
+        "", # current_uid_state
+        "No file selected for AI Analysis.", # current_uid_md
+        "", # url_html
+        None, # audio_out
+        "Selection error.", # status_fetch
     )
 
-    # Праверка, ці ёсць даныя для апрацоўкі
     if (
         evt is None
         or displayed_df is None
@@ -707,40 +707,42 @@ def ui_on_batch_row_select(
         return empty_return
 
     try:
-        # КРОК 1: Атрымліваем індэкс выбранага радка з аб'екта падзеі (evt)
-        # evt.index тут успрымаем як спіс выбраных радкоў, бярэм першы
         visual_row_index = evt.index[0]
         clicked_row_from_view = displayed_df.iloc[visual_row_index]
-
-        # КРОК 2: Здабываем унікальны ідэнтыфікатар (UniqueId)
         uid = str(clicked_row_from_view.get("UniqueId", "")).strip()
         if not uid:
             return empty_return
 
-        # Шукай арыгінальны радок у поўным наборы даных
         original_row_series = full_df_state[full_df_state["UniqueId"] == uid]
         if original_row_series.empty:
             return empty_return
         original_row = original_row_series.iloc[0]
         row_dict = original_row.to_dict()
 
-        # КРОК 3: Чалавечы лэйбл для выпадаючага спісу
         label = (
             f"{row_dict.get('Start','')} | "
             f"{row_dict.get('Caller','')} → "
             f"{row_dict.get('Destination','')} "
             f"({row_dict.get('Duration (s)','')}s)"
         )
-
-        # КРОК 4: Абнаўленне для Dropdown "Call"
-        # choices = [("бачны тэкст", value_for_component)]
         dd_update = gr.update(choices=[(f"Batch: {label}", uid)], value=uid)
+        uid_md_update = ui_show_current_uid(uid)
 
-        # КРОК 5: Вяртаем:
-        #  - абнаўленне row_dd
-        #  - сам uid -> кладзецца ў current_uid_state
-        #  - фарматаваны Markdown з UID у табе "AI Analysis"
-        return dd_update, uid, ui_show_current_uid(uid)
+        # ВЫПРАЎЛЕНА: Дадаем логіку прайгравання аўдыё прама сюды
+        try:
+            tenant = tenant_service.resolve(tenant_id or None)
+            handle = call_log_service.ensure_recording(uid, tenant)
+            listen_url = (
+                f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
+                f"{tenant.vochi_client_id}/{uid}"
+            )
+            html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
+            audio_uri = handle.local_uri
+            status_msg = "Ready ✅"
+        except Exception as exc:
+            html, audio_uri, status_msg = f"Playback failed: {exc}", None, ""
+
+        return dd_update, uid, uid_md_update, html, audio_uri, status_msg
 
     except (AttributeError, IndexError, KeyError):
         return empty_return
@@ -751,6 +753,24 @@ def ui_on_batch_row_select(
 # ----------------------------------------------------------------------------
 def _today_str():
     return _dt.date.today().strftime("%Y-%m-%d")
+
+
+# ВЫПРАЎЛЕНА: JavaScript-код для выпраўлення спасылак
+# Ён знаходзіць усе спасылкі з класам 'new-tab-link' (у табліцы) і ID 'audio-listen-link' (у плэеры)
+# і дадае ім target='_blank'.
+JS_FIX_LINKS = """
+() => {
+  setTimeout(() => {
+    const links = document.querySelectorAll('a.new-tab-link, a#audio-listen-link');
+    links.forEach(link => {
+      if (link) {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
+    });
+  }, 100);
+}
+"""
 
 
 with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
@@ -883,7 +903,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         outputs=[calls_df, batch_results_df, row_dd, status_fetch, pwd_group],
     )
 
-    # масавы аналіз (stream з yield -> жывое абнаўленне і "прагрэс-бар" у выглядзе статусу)
+    # масавы аналіз
     batch_btn.click(
         fn=ui_mass_analyze,
         inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
@@ -895,13 +915,17 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
     ).then(
         fn=ui_hide_call_list,
         outputs=[calls_df],
+    ).then( # ВЫПРАЎЛЕНА: запускаем JS для выпраўлення спасылак у табліцы
+        fn=None, js=JS_FIX_LINKS
     )
 
-    # выбар радка з батчу -> абнаўляем поле Call + UID у AI Analysis
+    # ВЫПРАЎЛЕНА: выбар радка з батчу -> абнаўляем усё, уключаючы плэер
     batch_results_df.select(
         fn=ui_on_batch_row_select,
         inputs=[batch_results_df, batch_results_state, tenant_tb],
-        outputs=[row_dd, current_uid_state, current_uid_md],
+        outputs=[row_dd, current_uid_state, current_uid_md, url_html, audio_out, status_fetch],
+    ).then( # ВЫПРАЎЛЕНА: запускаем JS для выпраўлення спасылкі ў плэеры
+        fn=None, js=JS_FIX_LINKS
     )
 
     # прайграванне аўдыё
@@ -909,6 +933,8 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         ui_play_audio,
         inputs=[row_dd, calls_df, tenant_tb],
         outputs=[url_html, audio_out, status_fetch],
+    ).then( # ВЫПРАЎЛЕНА: запускаем JS для выпраўлення спасылкі ў плэеры
+        fn=None, js=JS_FIX_LINKS
     )
 
     # экспарт CSV
@@ -939,7 +965,7 @@ with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
             current_uid_state,
         ],
         outputs=[analysis_md],
-        show_progress="full",  # Gradio будзе паказваць progress bar аўтаматычна
+        show_progress="full",
     )
 
 if __name__ == "__main__":
