@@ -137,6 +137,79 @@ class UIHandlers:
         Паведамленні прагрэс-статусу і выніковае паведамленне ідуць буйным шрыфтам (Markdown ## / ###).
         """
 
+        yield from self._run_mass_analyze(
+            date_value,
+            time_from_value,
+            time_to_value,
+            call_type_value,
+            tenant_id,
+            authed,
+            custom_prompt_override=None,
+        )
+
+    def build_custom_batch_prompt(self, conditions_text: str) -> str:
+        base_template = self.deps.batch_custom_prompt_template or "{CONDITIONS}"
+        clean_conditions = (conditions_text or "").strip()
+        return base_template.replace("{{CONDITIONS}}", clean_conditions)
+
+    def render_custom_prompt(self, conditions_text: str) -> str:
+        """Build full prompt text for preview and execution."""
+        return self.build_custom_batch_prompt(conditions_text)
+
+    def open_custom_prompt(self, stored_conditions: str):
+        """Паказаць акно з умовамі для кастомнага батча."""
+        clean_value = (stored_conditions or "").strip()
+        preview = self.build_custom_batch_prompt(clean_value)
+        return (
+            gr.update(value=clean_value),
+            preview,
+            gr.update(visible=True),
+        )
+
+    @staticmethod
+    def close_custom_prompt():
+        """Схаваць акно з умовамі."""
+        return gr.update(visible=False)
+
+    @staticmethod
+    def save_custom_conditions(conditions_text: str):
+        """Захаваць умовы і закрыць акно перад стартам."""
+        return (conditions_text or "").strip(), gr.update(visible=False)
+
+    def mass_analyze_custom(
+        self,
+        conditions_text: str,
+        date_value,
+        time_from_value,
+        time_to_value,
+        call_type_value,
+        tenant_id,
+        authed,
+    ):
+        """Запуск батча з карыстальніцкім промптам."""
+
+        custom_prompt = self.build_custom_batch_prompt(conditions_text)
+        yield from self._run_mass_analyze(
+            date_value,
+            time_from_value,
+            time_to_value,
+            call_type_value,
+            tenant_id,
+            authed,
+            custom_prompt_override=custom_prompt,
+        )
+
+    def _run_mass_analyze(
+        self,
+        date_value,
+        time_from_value,
+        time_to_value,
+        call_type_value,
+        tenant_id,
+        authed,
+        *,
+        custom_prompt_override: str | None,
+    ):
         empty_df = pd.DataFrame()
         hidden_df_update = gr.update(value=empty_df, visible=False)
         hidden_file = gr.update(value=None, visible=False)
@@ -200,6 +273,9 @@ class UIHandlers:
 
             rows = []
             total = len(entries)
+            prompt_override = custom_prompt_override
+            if prompt_override is None:
+                prompt_override = self.deps.batch_prompt_text or None
 
             yield (
                 gr.update(value=pd.DataFrame(), visible=False),
@@ -226,7 +302,7 @@ class UIHandlers:
                         options=AnalysisOptions(
                             model_key=self.deps.batch_model_key,
                             prompt_key=self.deps.batch_prompt_key,
-                            custom_prompt=self.deps.batch_prompt_text or None,
+                            custom_prompt=prompt_override,
                         ),
                     )
 
@@ -250,11 +326,13 @@ class UIHandlers:
                         row_data["Needs follow-up"] = ""
                         row_data["Reason"] = result.text
 
-                    row_data["Link"] = f'<a href="{link}" class="new-tab-link">Listen</a>'
+                    row_data["Link"] = (
+                        f'<a href="{link}" target="_blank">Listen</a>'
+                    )
                     row_data["Status"] = "✅"
                 except Exception as exc:
                     row_data["Needs follow-up"] = ""
-                    row_data["Reason"] = str(exc)
+                    row_data["Reason"] = f"❌ {exc}"
                     row_data["Link"] = ""
                     row_data["Status"] = "❌"
 

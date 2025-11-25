@@ -52,6 +52,8 @@ class AppDependencies:
     batch_prompt_text: str
     batch_model_key: str
     batch_language: config.Language
+    batch_custom_conditions: str
+    batch_custom_prompt_template: str
 
 
 MODEL_PLACEHOLDER_CHOICE = (
@@ -136,6 +138,8 @@ def build_dependencies() -> AppDependencies:
             batch_prompt_text=config.BATCH_PROMPT_TEXT,
             batch_model_key=config.BATCH_MODEL_KEY or model_default or "",
             batch_language=batch_language,
+            batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
+            batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
         )
 
     secrets_adapter = EnvSecretsAdapter()
@@ -180,4 +184,6 @@ def build_dependencies() -> AppDependencies:
         batch_prompt_text=config.BATCH_PROMPT_TEXT,
         batch_model_key=config.BATCH_MODEL_KEY or model_default or "",
         batch_language=batch_language,
+        batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
+        batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
     )
