@@ -121,3 +121,25 @@ Output format (must be valid JSON; no extra text):
 )
 # ISO language code for batch (app converts to Language enum)
 BATCH_LANGUAGE_CODE = "ru"
+
+# ---------------------------
+# Custom batch prompt configuration
+# ---------------------------
+BATCH_CUSTOM_CONDITIONS_DEFAULT = (
+    """A call requires follow-up or extra attention when any of the following is true:\n"
+    "- The client sounds dissatisfied, complains, or expresses negative emotions.\n"
+    "- The client asks to be called back or requests information but does not get a clear answer.\n"
+    "- The employee cannot help, gives incomplete information, or ends the call abruptly.\n"
+    "- The client reports problems with booking, payment, or test results.\n"
+    "- The conversation seems incomplete, interrupted, or unresolved."""
+)
+
+BATCH_CUSTOM_PROMPT_TEMPLATE = (
+    """You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\n\n"
+    "{{CONDITIONS}}\n\n"
+    "Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\n\n"
+    "Respond strictly in the following format:\n"
+    "Needs follow-up: Yes/No\n"
+    "Summary: [one short sentence]\n\n"
+    "If no issues are found, use a neutral summary such as “The issue was resolved” or “The client received clear information.”"""
+)

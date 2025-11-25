@@ -35,6 +35,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         authed = gr.State(False)
         batch_results_state = gr.State(pd.DataFrame())
         current_uid_state = gr.State("")
+        custom_batch_conditions_state = gr.State(deps.batch_custom_conditions)
 
         with gr.Group(visible=os.environ.get("VOCHI_UI_PASSWORD", "") != "") as pwd_group:
             gr.Markdown("### 🔐 Enter password")
@@ -66,7 +67,25 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 with gr.Row():
                     filter_btn = gr.Button("Filter", variant="primary", scale=0)
                     batch_btn = gr.Button("Batch analyze", variant="secondary", scale=0)
+                    batch_custom_btn = gr.Button(
+                        "Batch analyze custom", variant="secondary", scale=0
+                    )
                     save_btn = gr.Button("Save to file", scale=0)
+
+                with gr.Group(visible=False) as custom_prompt_modal:
+                    gr.Markdown("### Batch analyze custom prompt")
+                    custom_prompt_tb = gr.Textbox(
+                        label="Rules and conditions (editable part)",
+                        lines=8,
+                        value=deps.batch_custom_conditions,
+                    )
+                    custom_prompt_preview = gr.Markdown(
+                        value=handlers.render_custom_prompt(deps.batch_custom_conditions),
+                        elem_id="custom-batch-prompt-preview",
+                    )
+                    with gr.Row():
+                        custom_start_btn = gr.Button("Старт", variant="primary")
+                        custom_cancel_btn = gr.Button("Cancel")
 
                 status_fetch = gr.Markdown()
                 batch_status_md = gr.Markdown()
@@ -155,6 +174,50 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         batch_btn.click(
             fn=handlers.mass_analyze,
             inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
+            outputs=[batch_results_df, batch_status_md, batch_file],
+        ).then(
+            fn=lambda df: df,
+            inputs=[batch_results_df],
+            outputs=[batch_results_state],
+        ).then(
+            fn=handlers.hide_call_list,
+            outputs=[calls_df],
+        ).then(
+            fn=None, js=JS_FIX_LINKS
+        )
+
+        batch_custom_btn.click(
+            handlers.open_custom_prompt,
+            inputs=[custom_batch_conditions_state],
+            outputs=[custom_prompt_tb, custom_prompt_preview, custom_prompt_modal],
+        )
+
+        custom_prompt_tb.change(
+            handlers.render_custom_prompt,
+            inputs=[custom_prompt_tb],
+            outputs=[custom_prompt_preview],
+        )
+
+        custom_cancel_btn.click(
+            handlers.close_custom_prompt,
+            outputs=[custom_prompt_modal],
+        )
+
+        custom_start_btn.click(
+            handlers.save_custom_conditions,
+            inputs=[custom_prompt_tb],
+            outputs=[custom_batch_conditions_state, custom_prompt_modal],
+        ).then(
+            fn=handlers.mass_analyze_custom,
+            inputs=[
+                custom_batch_conditions_state,
+                date_inp,
+                time_from_inp,
+                time_to_inp,
+                call_type_dd,
+                tenant_tb,
+                authed,
+            ],
             outputs=[batch_results_df, batch_status_md, batch_file],
         ).then(
             fn=lambda df: df,
