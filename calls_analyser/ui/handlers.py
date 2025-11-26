@@ -344,8 +344,14 @@ class UIHandlers:
                     )
                     row_data["Status"] = "✅"
                 except Exception as exc:
-                    row_data["Needs follow-up"] = ""
-                    row_data["Reason"] = f"❌ {exc}"
+                    error_msg = str(exc)
+                    # Check if it's a retryable error that failed after all retries
+                    if "503" in error_msg or "UNAVAILABLE" in error_msg or "overloaded" in error_msg.lower():
+                        row_data["Needs follow-up"] = ""
+                        row_data["Reason"] = f"⏳ Model overloaded (retried 5 times, failed)"
+                    else:
+                        row_data["Needs follow-up"] = ""
+                        row_data["Reason"] = f"❌ {exc}"
                     row_data["Link"] = ""
                     row_data["Status"] = "❌"
 

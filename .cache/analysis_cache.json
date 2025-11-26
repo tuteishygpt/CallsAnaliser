@@ -1,0 +1,353 @@
+{
+  "[\"Amedis\", \"1764133665.9\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы клиента были решены, информация предоставлена, и разговор завершен вежливо.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764133248.0\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию о возрасте для проведения УЗИ.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764133802.23\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы решены, запись произведена, нет причин для дополнительного внимания.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135039.26\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Оператор уточнил информацию и подтвердил, что услуга не была оказана, поэтому гарантийное письмо будет аннулировано, что решает проблему клиента.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135762.35\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не смог получить услугу, так как она будет доступна только после Нового года.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135778.40\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы клиента были решены, и он был удовлетворен предложенными вариантами записи.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136154.53\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о возможности записи на конец декабря и ему предложены дальнейшие действия.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136353.62\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиенту была предоставлена неполная информация о записи для ребенка, и ему было предложено перезвонить в другое время.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136750.71\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию и успешно записался на процедуры.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137020.80\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The client successfully booked an appointment for an ultrasound, and the conversation concluded normally.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137452.89\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиентка хочет отменить запись к врачу из-за болезни, но ей не предлагают перенести визит, и запись просто отменяют.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137674.98\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The client received the necessary information and confirmed their understanding.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137757.107\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The call is a standard informational greeting from the medical center, providing operating hours and offering assistance.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137845.109\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The conversation is complete and all client questions have been answered without any expressed dissatisfaction.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764137914.118\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"The client's insurance is incorrectly applied, and the employee needs to call back to rectify the situation.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764138038.121\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы были решены в ходе разговора, и клиент остался доволен.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764138640.130\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы клиента были решены, и он остался доволен предоставленной информацией.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764138692.132\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The client successfully booked an appointment and expressed satisfaction with the outcome.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764138857.142\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию и записался на прием.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764138999.147\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The conversation is complete, the client received all necessary information and a booking was made.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139058.150\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент плохо слышит и дважды просит повторить, но связь обрывается, не позволяя решить его вопрос.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139119.159\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о возможном окне для записи на следующий день, и сотрудник предложил перезвонить.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139223.170\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не смог получить консультацию нужного специалиста, что требует дальнейшего внимания.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139287.179\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы клиента были решены, и запись была успешно оформлена.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139681.188\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы были решены, клиент получил нужную информацию и договорился о визите.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139715.193\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The client simply requested to stop recording, and the employee complied without any issues or further discussion.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139768.212\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Разговор завершен, и клиент получил всю необходимую информацию о записи.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139827.215\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The call is a routine confirmation of an appointment and was successfully completed without any issues.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139906.218\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Звонок был для подтверждения записи, и клиент подтвердил ее без каких-либо проблем.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764139971.221\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Перезвон не требуется, так как администратор подтвердил запись на прием и напомнил о времени визита.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764133248.0\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: No\nSummary: Клиент получил информацию о возрасте, с которого проводится исследование.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764133665.9\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: No\nSummary: Клиент записался на прием к специалисту, получив всю необходимую информацию.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135039.26\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: No\nSummary: Сотрудник уточнил, что колоноскопия не проводилась, и подтвердил, что гарантийное письмо будет аннулировано.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135762.35\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: Yes\nSummary: Клиент не смог записаться на УЗИ плечевого сустава из-за отсутствия специалиста, но была предоставлена информация о возможности записи после Нового года.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135778.40\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: Yes\nSummary: Клиент не получил четкого ответа о возможности записи к конкретному врачу и ожидает обратного звонка.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136154.53\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: Yes\nSummary: Клиент не получил точного ответа о возможности записи на процедуру в конце декабря и запросил информацию о начале января.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136353.62\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: No\nSummary: Клиентка получила информацию о невозможности попасть к детскому специалисту и рекомендации записаться к другому врачу.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764136750.71\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\\n\\n\\\"\\n    \\\"A call requires follow-up or extra attention when any of the following is true:\\n\\nThe client sounds dissatisfied, complains, or expresses negative emotions, excluding cases where the issue is solely due to the unavailability of a specific specialist or service.\\n\\nThe client asks to be called back or requests information but does not receive a clear answer.\\n\\nThe employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.\\n\\nThe client reports problems with booking, payment, or test results.\\n\\nThe conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability.\\n\\n\\\"\\n    \\\"Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\\n\\n\\\"\\n    \\\"Respond strictly in the following format:\\n\\\"\\n    \\\"Needs follow-up: Yes/No\\n\\\"\\n    \\\"Summary: [one short sentence]\\n\\n\\\"\\n    \\\"If no issues are found, use a neutral summary such as \\u201cThe issue was resolved\\u201d or \\u201cThe client received clear information.\\u201d\"]": {
+    "text": "Needs follow-up: No\nSummary: Клиент успешно записался на курс физиотерапии.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1764135778.40\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash\", \"\"]": {
+    "text": "Needs follow-up: Yes\nReason: The client's request for an appointment was not fulfilled, and she was placed on a waiting list with a promise of a callback when schedules become available.",
+    "model": "models/gemini-2.5-flash",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "default",
+      "tenant": "Amedis"
+    }
+  }
+}

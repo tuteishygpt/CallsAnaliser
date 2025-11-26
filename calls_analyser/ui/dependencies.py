@@ -15,6 +15,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.domain.exceptions import CallsAnalyserError
     from calls_analyser.ports.ai import AIModelPort
     from calls_analyser.services.analysis import AnalysisOptions, AnalysisService
+    from calls_analyser.services.cache import FileBackedCache
     from calls_analyser.services.call_log import CallLogService
     from calls_analyser.services.prompt import PromptService
     from calls_analyser.services.registry import ProviderRegistry
@@ -27,7 +28,9 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     CallsAnalyserError = Exception  # type: ignore
     AIModelPort = Any  # type: ignore
     AnalysisOptions = None  # type: ignore
+    AnalysisOptions = None  # type: ignore
     AnalysisService = None  # type: ignore
+    FileBackedCache = None  # type: ignore
     CallLogService = None  # type: ignore
     PromptService = None  # type: ignore
     ProviderRegistry = Dict  # type: ignore
@@ -151,7 +154,10 @@ def build_dependencies() -> AppDependencies:
 
     tenant_service = _build_tenant_service(secrets_adapter)
     call_log_service = _build_call_log_service(tenant_service, storage_adapter)
-    analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service)
+
+    cache_path = os.path.join(os.getcwd(), ".cache", "analysis_cache.json")
+    cache = FileBackedCache(cache_path)
+    analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service, cache=cache)
 
     model_options = _build_model_options(ai_registry)
     model_choices = model_options or [MODEL_PLACEHOLDER_CHOICE]

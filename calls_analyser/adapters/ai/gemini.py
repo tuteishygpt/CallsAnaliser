@@ -4,7 +4,10 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, Optional
 
 import importlib
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 _genai_module = importlib.util.find_spec("google.genai")
 if _genai_module is not None:  # pragma: no cover - optional dependency
@@ -50,7 +53,8 @@ class GeminiAIAdapter(AIModelPort):
 
         client = self._client
         
-        for attempt in range(3):
+        max_retries = 5
+        for attempt in range(max_retries):
             uploaded_name: Optional[str] = None
             try:
                 if getattr(audio, "path", None):
@@ -77,10 +81,21 @@ class GeminiAIAdapter(AIModelPort):
                     metadata={"lang": lang.value, "tenant": (options or {}).get("tenant_id")},
                 )
             except Exception as exc:  # pragma: no cover - passthrough in tests via fakes
-                if "429" in str(exc) or "503" in str(exc):
-                    if attempt < 2:
-                        time.sleep(4)
-                        continue
+                is_retryable = "429" in str(exc) or "503" in str(exc) or "UNAVAILABLE" in str(exc)
+                if is_retryable and attempt < max_retries - 1:
+                    # Exponential backoff: 2, 4, 8, 16 seconds
+                    wait_time = 2 ** (attempt + 1)
+                    logger.warning(
+                        f"Gemini API error (attempt {attempt + 1}/{max_retries}): {exc}. "
+                        f"Retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                    continue
+                # Log final failure
+                if is_retryable:
+                    logger.error(
+                        f"Gemini API failed after {max_retries} attempts: {exc}"
+                    )
                 raise AIModelError(f"Gemini call failed: {exc}") from exc
             finally:
                 if uploaded_name:
