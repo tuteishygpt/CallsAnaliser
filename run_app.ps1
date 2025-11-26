@@ -1,6 +1,6 @@
 # Set required secrets – replace the placeholder values with your real credentials
-$env:VOCHI_CLIENT_ID = 'elq3tE3JhZWuKi8HsGI6PkipkYiUbjJN'
-$env:GOOGLE_API_KEY = 'AIzaSyAdMgQDxFLfomMiqGvWhIUMrVNvSWgMPMM'
+$env:VOCHI_CLIENT_ID = 'el '
+$env:GOOGLE_API_KEY = 'AIzaS '
 $env:VOCHI_UI_PASSWORD = '123'
 
 # Optional: activate a virtual environment if you have one
