@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, Optional
 
 import importlib
+import time
 
 _genai_module = importlib.util.find_spec("google.genai")
 if _genai_module is not None:  # pragma: no cover - optional dependency
@@ -48,39 +49,45 @@ class GeminiAIAdapter(AIModelPort):
             raise AIModelError("Audio source must provide either a path or content")
 
         client = self._client
-        uploaded_name: Optional[str] = None
-        try:
-            if getattr(audio, "path", None):
-                uploaded = client.files.upload(file=getattr(audio, "path"))
-            else:
-                uploaded = client.files.upload_bytes(
-                    file=getattr(audio, "content"),
-                    mime_type="audio/mpeg",
+        
+        for attempt in range(3):
+            uploaded_name: Optional[str] = None
+            try:
+                if getattr(audio, "path", None):
+                    uploaded = client.files.upload(file=getattr(audio, "path"))
+                else:
+                    uploaded = client.files.upload_bytes(
+                        file=getattr(audio, "content"),
+                        mime_type="audio/mpeg",
+                    )
+                uploaded_name = getattr(uploaded, "name", None)
+                system_instruction = self._system_instruction(lang)
+                merged_prompt = f"[SYSTEM INSTRUCTION: {system_instruction}]\n\n{prompt}"
+                response = client.models.generate_content(
+                    model=self._model,
+                    contents=[uploaded, merged_prompt],
                 )
-            uploaded_name = getattr(uploaded, "name", None)
-            system_instruction = self._system_instruction(lang)
-            merged_prompt = f"[SYSTEM INSTRUCTION: {system_instruction}]\n\n{prompt}"
-            response = client.models.generate_content(
-                model=self._model,
-                contents=[uploaded, merged_prompt],
-            )
-            text = getattr(response, "text", None)
-            if not text:
-                raise AIModelError("Model returned no text")
-            return AnalysisResult(
-                text=text,
-                model=self._model,
-                provider=self.provider_name,
-                metadata={"lang": lang.value, "tenant": (options or {}).get("tenant_id")},
-            )
-        except Exception as exc:  # pragma: no cover - passthrough in tests via fakes
-            raise AIModelError(f"Gemini call failed: {exc}") from exc
-        finally:
-            if uploaded_name:
-                try:
-                    client.files.delete(name=uploaded_name)
-                except Exception:  # pragma: no cover - cleanup best effort
-                    pass
+                text = getattr(response, "text", None)
+                if not text:
+                    raise AIModelError("Model returned no text")
+                return AnalysisResult(
+                    text=text,
+                    model=self._model,
+                    provider=self.provider_name,
+                    metadata={"lang": lang.value, "tenant": (options or {}).get("tenant_id")},
+                )
+            except Exception as exc:  # pragma: no cover - passthrough in tests via fakes
+                if "429" in str(exc) or "503" in str(exc):
+                    if attempt < 2:
+                        time.sleep(4)
+                        continue
+                raise AIModelError(f"Gemini call failed: {exc}") from exc
+            finally:
+                if uploaded_name:
+                    try:
+                        client.files.delete(name=uploaded_name)
+                    except Exception:  # pragma: no cover - cleanup best effort
+                        pass
 
     @staticmethod
     def _system_instruction(lang: Language) -> str:
