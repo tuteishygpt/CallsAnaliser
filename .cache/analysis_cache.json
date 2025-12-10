@@ -349,5 +349,147 @@
       "lang": "default",
       "tenant": "Amedis"
     }
+  },
+  "[\"Amedis\", \"1765342960.0\", \"simple\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "**Call Summary:**\n\n*   **Purpose:** Appointment booking.\n*   **Patient Intent:** To schedule an appointment for OBT (ultrasound) on the lateral side of the pelvic bone.\n*   **Outcome:** Appointment booked for December 30th at 4:00 PM.\n*   **Next Steps:** Patient to attend the appointment.\n*   **Patient Emotion:** 3/5 (Slightly confused but seeking information).\n*   **Agent Tone:** 4/5 (Professional and helpful).\n*   **Alerts:** None.\n\nService quality rating: 4/5. The agent successfully booked the appointment and provided clear information.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "default",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765373671.1820\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию и остался доволен.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765374007.1845\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все вопросы клиента были решены, и он получил полную информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765374928.1860\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиентка изначально записывалась на УЗИ ног, но в ходе разговора выяснилось, что проблема с венами на руках, и она хочет уточнить, может ли врач провести УЗИ кистей рук, на что получил отрицательный ответ, требующий дальнейшего уточнения.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765375273.1869\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"You are analyzing a full phone conversation between a client and a medical center employee.\\nRead and understand the entire dialogue before making a decision.\\nDecide whether the call needs follow-up or additional attention, and briefly explain why.\\n\\nA call needs follow-up if:\\n\\nthe client is dissatisfied, complains, or shows negative emotions;\\n\\nthe client requests a callback or information but doesn\\u2019t receive a clear answer;\\n\\nthe employee cannot help, gives incomplete information, or ends the call abruptly;\\n\\nthe client reports issues with booking, payment, or test results;\\n\\nthe conversation is incomplete, interrupted, or unresolved.\\n\\nMake your decision based on the overall outcome of the whole conversation, not a single line.\\n\\nOutput format (must be valid JSON; no extra text):\\n\\n{\\n  \\\"needs_follow_up\\\": true | false,\\n  \\\"reason\\\": \\\"one short sentence explaining the decision\\\"\\n}\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о невозможности проведения УЗИ в данный момент.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765373671.1820\", \"simple\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "**Call Summary:**\n\n*   **Purpose:** Appointment inquiry.\n*   **Patient Intent:** To schedule an appointment with a specific doctor.\n*   **Outcome:** Appointment time identified, patient to call back later.\n*   **Next Steps:** Patient will call back at 15:00.\n*   **Patient Emotion:** 3/5 (Slightly uncertain but polite).\n*   **Agent Tone:** 4/5 (Professional and helpful).\n*   **Alerts:** None identified.\n\nService quality rating: 4/5. The agent was professional and provided the requested information clearly.",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "default",
+      "tenant": "Amedis"
+    }
+  },
+  "[\"Amedis\", \"1765374007.1845\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент хочет попасть к кардиологу после УЗИ, но сотрудник не может это обеспечить и предлагает другого специалиста, что не удовлетворяет запрос.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765374928.1860\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиентка не получила информацию о возможности проведения УЗИ кистей рук, хотя записана на УЗИ ног.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765375273.1869\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил информацию о возможности записи на УЗИ органов малого таза.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376082.1881\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент позвонил по ошибке, но быстро понял это и уточнил верный номер, не выразив недовольства.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376134.1890\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил услугу (УЗИ суставов), которая его интересовала, и информацию о возможности ее получения в данном центре.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376226.1901\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил возможность записаться на прием из-за отсутствия свободных мест и большого листа ожидания.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376261.1907\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию и записался на прием к врачу.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376580.1929\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил запись к врачу и попросил перезвонить, но ответ не был предоставлен.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765376816.1946\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не смог попасть на запланированный прием и просит перенести запись, не получив конкретного ответа.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765377452.1971\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию о записи на прием.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765373671.1820\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил полную информацию о времени записи и остался доволен.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
   }
 }

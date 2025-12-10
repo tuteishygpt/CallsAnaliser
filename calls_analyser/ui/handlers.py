@@ -13,6 +13,7 @@ from .dependencies import AppDependencies, AnalysisOptions
 from . import utils
 from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.domain.models import AnalysisResult
 from calls_analyser.services.gemini_batch import BatchTask, GeminiBatchRunner, guess_mime_type
 
 
@@ -96,42 +97,105 @@ class UIHandlers:
         lang_instruction = GeminiAIAdapter._system_instruction(self.deps.batch_language)
         merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
 
+        # Resolve provider info for cache key
+        provider = self.deps.ai_registry.get(self.deps.batch_model_key)
+        provider_name = getattr(provider, "provider_name", self.deps.batch_model_key)
+        
+        # Determine strict prompt fragment for cache key compatibility
+        # If prompt matches default config text, we treat custom_fragment as empty
+        # to match AnalysisService behavior (which uses prompt_key template).
+        custom_fragment = ""
+        if (prompt_override or "").strip() != (self.deps.batch_prompt_text or "").strip():
+             custom_fragment = (prompt_override or "").strip()
+
+        final_rows = [None] * len(entries)
         tasks: list[BatchTask] = []
-        for entry in entries:
-            handle = self.deps.call_log_service.ensure_recording(entry.unique_id, tenant)
-            mime_type = guess_mime_type(handle.local_uri)
-            tasks.append(
-                BatchTask(
-                    key=entry.unique_id,
-                    path=handle.local_uri,
-                    mime_type=mime_type,
+        task_indices: list[int] = []
+
+        # Check cache first
+        for idx, entry in enumerate(entries):
+            cache_key = (
+                tenant.tenant_id,
+                entry.unique_id,
+                self.deps.batch_prompt_key,
+                provider_name,
+                self.deps.batch_model_key,
+                custom_fragment,
+            )
+            
+            # Access cache directly (it's a MutableMapping)
+            cached_result = self.deps.analysis_service._cache.get(cache_key)
+            if cached_result:
+                row_data = self._build_row_base(entry)
+                self._fill_row_with_text(row_data, entry, tenant, cached_result.text)
+                final_rows[idx] = row_data
+            else:
+                handle = self.deps.call_log_service.ensure_recording(entry.unique_id, tenant)
+                mime_type = guess_mime_type(handle.local_uri)
+                tasks.append(
+                    BatchTask(
+                        key=entry.unique_id,
+                        path=handle.local_uri,
+                        mime_type=mime_type,
+                    )
                 )
+                task_indices.append(idx)
+
+        # Run batch only for missing tasks
+        if tasks:
+            runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key)
+            result_map = runner.run_batch(
+                tasks,
+                merged_prompt,
+                chunk_size=self.deps.batch_params.batch_size,
             )
 
-        runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key)
-        result_map = runner.run_batch(
-            tasks,
-            merged_prompt,
-            chunk_size=self.deps.batch_params.batch_size,
-        )
+            for i, task in enumerate(tasks):
+                original_idx = task_indices[i]
+                entry = entries[original_idx]
+                row_data = self._build_row_base(entry)
+                
+                text_result = result_map.get(entry.unique_id)
+                if text_result:
+                    if text_result.startswith("Error:"):
+                        self._fill_row_error(row_data, text_result)
+                    else:
+                        self._fill_row_with_text(row_data, entry, tenant, text_result)
+                        
+                        # Save success result to cache
+                        # We must replicate logic of AnalysisService.analyze_call key generation
+                        cache_key = (
+                            tenant.tenant_id,
+                            entry.unique_id,
+                            self.deps.batch_prompt_key,
+                            provider_name,
+                            self.deps.batch_model_key,
+                            custom_fragment,
+                        )
+                        new_result = AnalysisResult(
+                            text=text_result,
+                            model=self.deps.batch_model_key,
+                            provider=provider_name,
+                            metadata={"batch": True}
+                        )
+                        # This triggers _save() in FileBackedCache
+                        self.deps.analysis_service._cache[cache_key] = new_result
 
-        rows = []
-        for entry in entries:
-            row_data = self._build_row_base(entry)
-            text_result = result_map.get(entry.unique_id)
-            if text_result:
-                if text_result.startswith("Error:"):
-                    self._fill_row_error(row_data, text_result)
                 else:
-                    self._fill_row_with_text(row_data, entry, tenant, text_result)
-            else:
-                self._fill_row_error(row_data, "No result returned.")
-            rows.append(row_data)
+                    self._fill_row_error(row_data, "No result returned.")
+                
+                final_rows[original_idx] = row_data
 
+        rows = [r for r in final_rows if r is not None]
+        
         ok_count = len([row for row in rows if row.get("Status") == "✅"])
+        cached_count = len(entries) - len(tasks)
+        processed_count = len(tasks)
+        
         final_msg = (
             "✅ Gemini BATCH completed. "
-            f"Found: {len(entries)}, processed successfully: {ok_count}"
+            f"Found: {len(entries)} (Cached: {cached_count}, Processed: {processed_count}), "
+            f"Success: {ok_count}"
         )
         return rows, final_msg
 

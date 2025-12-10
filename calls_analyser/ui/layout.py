@@ -116,6 +116,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                     label="Call",
                     info="Choose a row to listen/analyze",
                     type="value",
+                    allow_custom_value=True,
                 )
 
                 with gr.Row():
