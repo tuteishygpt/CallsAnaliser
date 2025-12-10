@@ -6,6 +6,7 @@ import os
 from typing import Any, Dict, List, Tuple
 
 from . import config
+from calls_analyser.batch_params import BatchParams, load_batch_params
 
 try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
@@ -57,6 +58,7 @@ class AppDependencies:
     batch_language: config.Language
     batch_custom_conditions: str
     batch_custom_prompt_template: str
+    batch_params: BatchParams
 
 
 MODEL_PLACEHOLDER_CHOICE = (
@@ -110,6 +112,7 @@ def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any)
 def build_dependencies() -> AppDependencies:
     """Prepare wiring for services used by the UI."""
     if not config.PROJECT_IMPORTS_AVAILABLE:
+        batch_params = load_batch_params()
         # minimal fallbacks that keep the UI responsive even without deps
         class MockAdapter:
             def get_optional_secret(self, _):  # pragma: no cover - simple stub
@@ -143,6 +146,7 @@ def build_dependencies() -> AppDependencies:
             batch_language=batch_language,
             batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
             batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
+            batch_params=batch_params,
         )
 
     secrets_adapter = EnvSecretsAdapter()
@@ -173,6 +177,8 @@ def build_dependencies() -> AppDependencies:
     except ValueError:
         batch_language = config.Language.AUTO
 
+    batch_params = load_batch_params()
+
     return AppDependencies(
         project_imports_available=True,
         secrets_adapter=secrets_adapter,
@@ -192,4 +198,5 @@ def build_dependencies() -> AppDependencies:
         batch_language=batch_language,
         batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
         batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
+        batch_params=batch_params,
     )

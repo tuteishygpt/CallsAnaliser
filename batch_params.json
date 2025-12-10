@@ -1,0 +1,4 @@
+{
+  "enable_gemini_batch": true,
+  "batch_size": 25
+}

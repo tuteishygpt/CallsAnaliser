@@ -11,11 +11,129 @@ import pandas as pd
 from . import config
 from .dependencies import AppDependencies, AnalysisOptions
 from . import utils
+from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
+from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.services.gemini_batch import BatchTask, GeminiBatchRunner, guess_mime_type
 
 
 class UIHandlers:
     def __init__(self, deps: AppDependencies):
         self.deps = deps
+
+    # ----------------------------------------------------------------------------
+    # Internal helpers
+    # ----------------------------------------------------------------------------
+    @staticmethod
+    def _parse_follow_up_fields(text: str) -> tuple[str, str]:
+        text_clean = str(text or "").strip()
+        try:
+            l, r = text_clean.find("{"), text_clean.rfind("}")
+            if l != -1 and r != -1 and r > l:
+                text_clean = text_clean[l : r + 1]
+            payload = json.loads(text_clean)
+            needs_follow_up = payload.get("needs_follow_up")
+            needs_str = "Yes" if needs_follow_up else "No"
+            reason = str(payload.get("reason") or "")
+            return needs_str, reason
+        except Exception:
+            if "Needs follow-up:" in text_clean:
+                try:
+                    parts = text_clean.split("Summary:", 1)
+                    nf_part = parts[0].replace("Needs follow-up:", "").strip()
+                    summary_part = parts[1].strip() if len(parts) > 1 else ""
+                    return nf_part, summary_part
+                except Exception:
+                    return "", text_clean
+        return "", text_clean
+
+    @staticmethod
+    def _build_row_base(entry):
+        return {
+            "Start": entry.started_at.isoformat() if entry.started_at else "",
+            "Caller": entry.caller_id or "",
+            "Destination": entry.destination or "",
+            "Duration (s)": entry.duration_seconds,
+            "UniqueId": entry.unique_id,
+        }
+
+    def _fill_row_with_text(self, row_data, entry, tenant, text):
+        needs, reason = self._parse_follow_up_fields(text)
+        link = (
+            f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
+            f"{tenant.vochi_client_id}/{entry.unique_id}"
+        )
+        row_data["Needs follow-up"] = needs
+        row_data["Reason"] = reason
+        row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>'
+        row_data["Status"] = "✅"
+
+    @staticmethod
+    def _fill_row_error(row_data, reason: str):
+        row_data["Needs follow-up"] = ""
+        row_data["Reason"] = reason
+        row_data["Link"] = ""
+        row_data["Status"] = "❌"
+
+    def _should_use_gemini_batch(self) -> bool:
+        if not self.deps.batch_params.enable_gemini_batch:
+            return False
+        if not self.deps.project_imports_available:
+            return False
+        if not self.deps.batch_model_key:
+            return False
+        try:
+            provider = self.deps.ai_registry.get(self.deps.batch_model_key)
+        except Exception:
+            return False
+        return getattr(provider, "provider_name", "") == "gemini"
+
+    def _run_gemini_batch_analysis(self, entries, tenant, prompt_override):
+        api_key = self.deps.secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
+        if not api_key:
+            raise AIModelError("GOOGLE_API_KEY is not configured")
+
+        prompt_text = prompt_override or self.deps.batch_prompt_text or ""
+        lang_instruction = GeminiAIAdapter._system_instruction(self.deps.batch_language)
+        merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
+
+        tasks: list[BatchTask] = []
+        for entry in entries:
+            handle = self.deps.call_log_service.ensure_recording(entry.unique_id, tenant)
+            mime_type = guess_mime_type(handle.local_uri)
+            tasks.append(
+                BatchTask(
+                    key=entry.unique_id,
+                    path=handle.local_uri,
+                    mime_type=mime_type,
+                )
+            )
+
+        runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key)
+        result_map = runner.run_batch(
+            tasks,
+            merged_prompt,
+            chunk_size=self.deps.batch_params.batch_size,
+        )
+
+        rows = []
+        for entry in entries:
+            row_data = self._build_row_base(entry)
+            text_result = result_map.get(entry.unique_id)
+            if text_result:
+                if text_result.startswith("Error:"):
+                    self._fill_row_error(row_data, text_result)
+                else:
+                    self._fill_row_with_text(row_data, entry, tenant, text_result)
+            else:
+                self._fill_row_error(row_data, "No result returned.")
+            rows.append(row_data)
+
+        ok_count = len([row for row in rows if row.get("Status") == "✅"])
+        final_msg = (
+            "✅ Gemini BATCH completed. "
+            f"Found: {len(entries)}, processed successfully: {ok_count}"
+        )
+        return rows, final_msg
 
     # ----------------------------------------------------------------------------
     # Gradio handlers
@@ -270,7 +388,6 @@ class UIHandlers:
                 )
                 return
 
-            rows = []
             total = len(entries)
             prompt_override = custom_prompt_override
             if prompt_override is None:
@@ -282,16 +399,31 @@ class UIHandlers:
                 hidden_file,
             )
 
+            if self._should_use_gemini_batch():
+                try:
+                    rows, final_msg = self._run_gemini_batch_analysis(
+                        entries, tenant, prompt_override
+                    )
+                    final_df = pd.DataFrame(rows)
+                    yield (
+                        gr.update(value=final_df, visible=True),
+                        h2_success(final_msg),
+                        hidden_file,
+                    )
+                    return
+                except Exception as exc:
+                    yield (
+                        hidden_df_update,
+                        h2_error(f"❌ Gemini BATCH failed: {exc}"),
+                        hidden_file,
+                    )
+                    return
+
+            rows = []
+
             for i, entry in enumerate(entries, start=1):
                 pct = int((i / total) * 100)
-
-                row_data = {
-                    "Start": entry.started_at.isoformat() if entry.started_at else "",
-                    "Caller": entry.caller_id or "",
-                    "Destination": entry.destination or "",
-                    "Duration (s)": entry.duration_seconds,
-                    "UniqueId": entry.unique_id,
-                }
+                row_data = self._build_row_base(entry)
 
                 try:
                     result = self.deps.analysis_service.analyze_call(
@@ -305,55 +437,17 @@ class UIHandlers:
                         ),
                     )
 
-                    link = (
-                        f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
-                        f"{tenant.vochi_client_id}/{entry.unique_id}"
-                    )
-
-                    try:
-                        text = str(result.text or "").strip()
-                        l, r = text.find("{"), text.rfind("}")
-                        if l != -1 and r != -1 and r > l:
-                            text = text[l : r + 1]
-                        payload = json.loads(text)
-
-                        row_data["Needs follow-up"] = (
-                            "Yes" if payload.get("needs_follow_up") else "No"
-                        )
-                        row_data["Reason"] = str(payload.get("reason") or "")
-                    except Exception:
-                        # Fallback for text format "Needs follow-up: Yes/No Summary: ..."
-                        text_clean = str(result.text or "").strip()
-                        if "Needs follow-up:" in text_clean:
-                            try:
-                                parts = text_clean.split("Summary:", 1)
-                                nf_part = parts[0].replace("Needs follow-up:", "").strip()
-                                summary_part = parts[1].strip() if len(parts) > 1 else ""
-                                
-                                row_data["Needs follow-up"] = nf_part
-                                row_data["Reason"] = summary_part
-                            except Exception:
-                                row_data["Needs follow-up"] = ""
-                                row_data["Reason"] = text_clean
-                        else:
-                            row_data["Needs follow-up"] = ""
-                            row_data["Reason"] = text_clean
-
-                    row_data["Link"] = (
-                        f'<a href="{link}" target="_blank">Listen</a>'
-                    )
-                    row_data["Status"] = "✅"
+                    self._fill_row_with_text(row_data, entry, tenant, result.text)
                 except Exception as exc:
                     error_msg = str(exc)
                     # Check if it's a retryable error that failed after all retries
                     if "503" in error_msg or "UNAVAILABLE" in error_msg or "overloaded" in error_msg.lower():
-                        row_data["Needs follow-up"] = ""
-                        row_data["Reason"] = f"⏳ Model overloaded (retried 5 times, failed)"
+                        self._fill_row_error(
+                            row_data,
+                            "⏳ Model overloaded (retried 5 times, failed)",
+                        )
                     else:
-                        row_data["Needs follow-up"] = ""
-                        row_data["Reason"] = f"❌ {exc}"
-                    row_data["Link"] = ""
-                    row_data["Status"] = "❌"
+                        self._fill_row_error(row_data, f"❌ {exc}")
 
                 rows.append(row_data)
 
