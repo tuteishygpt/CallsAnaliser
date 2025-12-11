@@ -61,5 +61,73 @@ def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value,
         custom_prompt_override=None,
     )
 
+
+# ----------------------------------------------------------------------------
+# Scheduler for automated daily batch (runs on Hugging Face Spaces / Servers)
+# ----------------------------------------------------------------------------
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    import run_daily_batch
+    import datetime
+
+    def run_scheduled_job():
+        """Wrapper to run the batch job for 'yesterday'."""
+        print("⏰ [Scheduler] Starting daily batch analysis...")
+        # Calculate yesterday
+        target_date = datetime.date.today() - datetime.timedelta(days=1)
+        
+        # Run the batch process using the same dependencies
+        # Note: We create new dependencies inside the job to ensure clean state if needed,
+        # but here reusing 'deps' is also fine if 'deps' is thread-safe.
+        # For safety/updates, we might want to re-build deps or just use the global 'deps'.
+        # Using global 'deps' for now as it holds the loaded secrets/config.
+        bp = deps.batch_params
+        run_daily_batch.run_batch_process(
+            deps, 
+            day=target_date, 
+            time_from_str=bp.filter_time_from, 
+            time_to_str=bp.filter_time_to, 
+            call_type_str=bp.filter_call_type, 
+            tenant_id_arg=None
+        )
+        print("✅ [Scheduler] Daily batch finished.")
+
+    # Create and configure scheduler
+    scheduler = BackgroundScheduler()
+    
+    # Read settings from batch_params
+    bp = deps.batch_params
+    
+    # Define update schedule job based on params
+    # We always start the scheduler, but condition valid jobs.
+    if bp.scheduler_enabled:
+        hour, minute = 1, 0
+        try:
+             # expect "HH:MM"
+             parts = bp.scheduler_cron_time.split(":")
+             hour = int(parts[0])
+             minute = int(parts[1])
+        except Exception:
+             print("⚠️  [Scheduler] Invalid cron_time format. Using default 01:00.")
+        
+        if bp.scheduler_mode == "interval":
+            interval_mins = max(1, bp.scheduler_interval_minutes)
+            print(f"ℹ️  [Scheduler] Mode: INTERVAL (every {interval_mins} mins). Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}")
+            scheduler.add_job(run_scheduled_job, "interval", minutes=interval_mins, next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=10)) 
+        else:
+            print(f"ℹ️  [Scheduler] Mode: CRON (at {hour:02d}:{minute:02d}). Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}")
+            scheduler.add_job(run_scheduled_job, "cron", hour=hour, minute=minute)
+            
+        scheduler.start()
+        print("ℹ️  [Scheduler] Background scheduler started.")
+    else:
+         print("ℹ️  [Scheduler] Scheduler is disabled in batch_params.")
+
+except ImportError:
+    print("⚠️  [Scheduler] APScheduler not installed. Background jobs disabled.")
+except Exception as e:
+    print(f"⚠️  [Scheduler] Failed to start scheduler: {e}")
+
+
 if __name__ == "__main__":
     demo.launch(allowed_paths=[os.environ.get("VOCHI_ALLOWED_PATH", "D:\\tmp")])

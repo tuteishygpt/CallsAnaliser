@@ -16,16 +16,60 @@ class BatchParams:
 
     enable_gemini_batch: bool = False
     batch_size: int = 20
+    
+    # Scheduler settings
+    scheduler_enabled: bool = False
+    scheduler_mode: str = "cron"  # "cron" or "interval"
+    scheduler_cron_time: str = "01:00"  # HH:MM
+    scheduler_interval_minutes: int = 120
+    
+    # Auto-run filters
+    filter_time_from: str | None = None
+    filter_time_to: str | None = None
+    filter_call_type: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BatchParams":
         enable = bool(payload.get("enable_gemini_batch", False))
+        
+        # Batch size
         try:
             size_raw = int(payload.get("batch_size", cls.batch_size))  # type: ignore[arg-type]
         except Exception:
             size_raw = cls.batch_size
         size = max(1, size_raw)
-        return cls(enable_gemini_batch=enable, batch_size=size)
+        
+        # Scheduler
+        sch_data = payload.get("scheduler", {})
+        if not isinstance(sch_data, dict):
+            sch_data = {}
+            
+        scheduler_enabled = bool(sch_data.get("enabled", False))
+        scheduler_mode = str(sch_data.get("mode", "cron"))
+        scheduler_cron_time = str(sch_data.get("cron_time", "01:00"))
+        try:
+            scheduler_interval_minutes = int(sch_data.get("interval_minutes", 120))
+        except:
+            scheduler_interval_minutes = 120
+            
+        filters = sch_data.get("filters", {})
+        filter_time_from = filters.get("time_from")
+        filter_time_to = filters.get("time_to")
+        filter_call_type = filters.get("call_type")
+
+        return cls(
+            enable_gemini_batch=enable, 
+            batch_size=size,
+            
+            scheduler_enabled=scheduler_enabled,
+            scheduler_mode=scheduler_mode,
+            scheduler_cron_time=scheduler_cron_time,
+            scheduler_interval_minutes=scheduler_interval_minutes,
+            
+            filter_time_from=filter_time_from,
+            filter_time_to=filter_time_to,
+            filter_call_type=filter_call_type
+        )
 
 
 def load_batch_params(path: str = DEFAULT_BATCH_PARAMS_PATH) -> BatchParams:

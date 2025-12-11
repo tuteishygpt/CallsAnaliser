@@ -1,4 +1,15 @@
 {
   "enable_gemini_batch": true,
-  "batch_size": 25
+  "batch_size": 25,
+  "scheduler": {
+    "enabled": true,
+    "mode": "cron",
+    "cron_time": "01:00",
+    "interval_minutes": 120,
+    "filters": {
+      "time_from": null,
+      "time_to": null,
+      "call_type": null
+    }
+  }
 }

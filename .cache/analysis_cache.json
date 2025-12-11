@@ -491,5 +491,181 @@
     "metadata": {
       "batch": true
     }
+  },
+  "[\"Amedis\", \"1765364493.1340\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на прием к врачу и получил всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765364557.1346\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о том, что запись в лист ожидания существует, и ему будет перезвонено при появлении окна.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765364996.1360\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не смог записаться к врачу из-за отсутствия свободных мест в текущем месяце.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365128.1369\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о записи к врачу и подтвердил ее, разговор завершен успешно.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365765.1378\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о доступных вариантах записи на УЗИ предстательной железы.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365819.1383\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Диалог завершен, клиент получил всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365828.1385\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент уточнил информацию об услуге и времени записи, решение будет принято позже.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365898.1398\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно перенес запись и получил необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765365935.1400\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил четкий ответ о возможности записи к врачу на конкретную дату, так как у врача плотный график.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366150.1410\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент согласился на предложенное время и дату, и запись была успешно перенесена.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366223.1413\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент отказался от записи на УЗИ и не выразил негативных эмоций или пожеланий.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366290.1416\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент согласился на предложенное время переноса записи.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366366.1419\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о дате записи на МРТ и дальнейшем визите к врачу.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366399.1424\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил запись на удобное для него время и дату, так как предложенные варианты не подошли.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366447.1433\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент обращается с неотложным вопросом (пройти процедуру сегодня), но не получает конкретного ответа о возможности, и ему предлагают лишь ждать отмены записей.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366588.1446\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент просит подумать и перезвонить, так как не уверен в возможности переноса записи.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765366719.1449\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно перенес запись на удобное время и получил всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765367117.1452\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент согласился на предложенное перенос записи на УЗИ и понял условия подготовки.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765367406.1455\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиентка получила всю необходимую информацию и записалась на прием.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765367551.1460\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на прием к врачу, получив всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765367676.1466\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию и подтвердил запись.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765367966.1479\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент уже прошёл УЗИ, но центр уведомляет его о переносе записи, что требует уточнения и решения ситуации.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
   }
 }
