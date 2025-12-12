@@ -11,6 +11,9 @@ import datetime
 import logging
 import sys
 from typing import List, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Setup simple logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+print(f"DEBUG: CWD is {os.getcwd()}")
+print(f"DEBUG: SUPABASE_URL present: {bool(os.environ.get('SUPABASE_URL'))}")
 
 from calls_analyser.ui import config as ui_config
 from calls_analyser.ui.dependencies import build_dependencies

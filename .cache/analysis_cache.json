@@ -699,5 +699,133 @@
     "metadata": {
       "batch": true
     }
+  },
+  "[\"Amedis\", \"1765540962.1808\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил подтверждение записи на процедуру и хотел уточнить время, но сотрудник не смог найти информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765541096.1823\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не смог записаться к врачу на желаемую дату и получил неполную информацию о возможности записи.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765541872.1851\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Разговор был оборван до того, как клиент успел что-либо сообщить сотруднику.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765541904.1860\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил исчерпывающий ответ о невозможности записи на январь и инструкции обратиться в понедельник.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765542145.1871\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на прием к врачу с учетом своих пожеланий по дате и времени.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765542299.1897\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Звонок был прерван из-за технической проблемы, и проблема клиента не была решена.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765542316.1907\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на процедуру, получив всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765542817.1931\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил нужную услугу и не получил информацию о сроках её появления.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765543082.1949\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о графике работы и возможности записи на прием.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765543113.1954\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о том, где можно сделать расшифровку ЭКГ, и поблагодарил сотрудника.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765543332.1977\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на прием к нужному специалисту на удобное время.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765544183.1995\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил информацию о записи и стоимости, и разговор завершился успешно.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765544369.2007\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил исчерпывающую консультацию по подбору лекарств и остался удовлетворен.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765544535.2009\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил четкого ответа на свой вопрос относительно гарантийного письма и не понял, кому он записан на прием.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765544668.2021\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Все прошло успешно, клиент получил нужную информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765544683.2023\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент не получил нужную услугу, но ему было предложено альтернативное решение.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
   }
 }
