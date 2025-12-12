@@ -83,6 +83,14 @@ def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value,
 # Scheduler for automated daily batch (runs on Hugging Face Spaces / Servers)
 # ----------------------------------------------------------------------------
 try:
+    import sys
+    # Ensure local modules are importable
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    print(f"DEBUG: sys.path is {sys.path}")
+    print(f"DEBUG: Directory contents of {os.getcwd()}: {os.listdir(os.getcwd())}")
+
+    from apscheduler.schedulers.background import BackgroundScheduler
+
     from apscheduler.schedulers.background import BackgroundScheduler
     import run_daily_batch
     import datetime
@@ -140,8 +148,9 @@ try:
     else:
          print("ℹ️  [Scheduler] Scheduler is disabled in batch_params.")
 
-except ImportError:
-    print("⚠️  [Scheduler] APScheduler not installed. Background jobs disabled.")
+except ImportError as e:
+    print(f"⚠️  [Scheduler] Import Error details: {e}")
+    print("⚠️  [Scheduler] APScheduler not installed or import failed. Background jobs disabled.")
 except Exception as e:
     print(f"⚠️  [Scheduler] Failed to start scheduler: {e}")
 
