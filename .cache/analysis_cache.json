@@ -667,5 +667,37 @@
     "metadata": {
       "batch": true
     }
+  },
+  "[\"Amedis\", \"1765465443.2029\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент обратился для записи, но выяснилось, что запись на сайте не прошла, и администратор не смог подтвердить запись.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765465547.2039\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент успешно записался на нужное обследование, получив всю необходимую информацию.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765465779.2052\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент хотел записаться к проктологу, но такой специалист в центре отсутствует, и администратор сообщил об этом.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Amedis\", \"1765465909.2055\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил всю необходимую информацию о врачах и стоимости приема.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
   }
 }

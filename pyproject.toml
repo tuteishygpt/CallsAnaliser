@@ -31,6 +31,7 @@ dependencies = [
     "pydantic>=2.7.0",
     "requests>=2.31.0",
     "soundfile>=0.12.1",
+    "supabase>=2.0.0",
 ]
 
 [project.optional-dependencies]

@@ -12,6 +12,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
+    from calls_analyser.adapters.storage.supabase_storage import SupabaseCache
     from calls_analyser.adapters.telephony.vochi import VochiTelephonyAdapter
     from calls_analyser.domain.exceptions import CallsAnalyserError
     from calls_analyser.ports.ai import AIModelPort
@@ -25,6 +26,7 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     GeminiAIAdapter = None  # type: ignore
     EnvSecretsAdapter = None  # type: ignore
     LocalStorageAdapter = None  # type: ignore
+    SupabaseCache = None  # type: ignore
     VochiTelephonyAdapter = None  # type: ignore
     CallsAnalyserError = Exception  # type: ignore
     AIModelPort = Any  # type: ignore
@@ -159,8 +161,15 @@ def build_dependencies() -> AppDependencies:
     tenant_service = _build_tenant_service(secrets_adapter)
     call_log_service = _build_call_log_service(tenant_service, storage_adapter)
 
-    cache_path = os.path.join(os.getcwd(), ".cache", "analysis_cache.json")
-    cache = FileBackedCache(cache_path)
+    supabase_url = secrets_adapter.get_optional_secret("SUPABASE_URL")
+    supabase_key = secrets_adapter.get_optional_secret("SUPABASE_KEY")
+
+    if supabase_url and supabase_key:
+        cache = SupabaseCache(supabase_url, supabase_key)
+    else:
+        cache_path = os.path.join(os.getcwd(), ".cache", "analysis_cache.json")
+        cache = FileBackedCache(cache_path)
+
     analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service, cache=cache)
 
     model_options = _build_model_options(ai_registry)
