@@ -18,6 +18,17 @@ from calls_analyser.ui.layout import build_demo
 deps = build_dependencies()
 handlers = UIHandlers(deps)
 
+# Diagnostic: Check Supabase connection
+print("DEBUG: Checking DB connection from app.py...")
+try:
+    if hasattr(deps.analysis_service._cache, "_table"):
+        count = deps.analysis_service._cache._table.select("*", count="exact", head=True).execute().count
+        print(f"DEBUG: Successfully connected to Supabase. Table 'analysis_results' has {count} rows.")
+    else:
+        print("DEBUG: Using local file cache (not Supabase). Check configuration.")
+except Exception as e:
+    print(f"DEBUG: Failed to query Supabase: {e}")
+
 
 def _build_app():
     return build_demo(deps, handlers)

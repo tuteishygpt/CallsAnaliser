@@ -113,6 +113,7 @@ class UIHandlers:
         task_indices: list[int] = []
 
         # Check cache first
+        print(f"DEBUG: Checking cache for {len(entries)} entries...")
         for idx, entry in enumerate(entries):
             cache_key = (
                 tenant.tenant_id,
@@ -126,10 +127,12 @@ class UIHandlers:
             # Access cache directly (it's a MutableMapping)
             cached_result = self.deps.analysis_service._cache.get(cache_key)
             if cached_result:
+                print(f"DEBUG: Cache HIT for {entry.unique_id}")
                 row_data = self._build_row_base(entry)
                 self._fill_row_with_text(row_data, entry, tenant, cached_result.text)
                 final_rows[idx] = row_data
             else:
+                print(f"DEBUG: Cache MISS for {entry.unique_id}. Key: {cache_key}")
                 handle = self.deps.call_log_service.ensure_recording(entry.unique_id, tenant)
                 mime_type = guess_mime_type(handle.local_uri)
                 tasks.append(
@@ -464,6 +467,7 @@ class UIHandlers:
             )
 
             if self._should_use_gemini_batch():
+                print("DEBUG: Using Gemini BATCH mode (API)")
                 try:
                     rows, final_msg = self._run_gemini_batch_analysis(
                         entries, tenant, prompt_override
@@ -482,6 +486,9 @@ class UIHandlers:
                         hidden_file,
                     )
                     return
+            else:
+                print(f"DEBUG: Gemini Batch disabled. enable_gemini_batch={self.deps.batch_params.enable_gemini_batch}, available={self.deps.project_imports_available}, model={self.deps.batch_model_key}")
+                # Fallback to serial processing (one by one)
 
             rows = []
 
