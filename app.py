@@ -83,14 +83,8 @@ def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value,
 # Scheduler for automated daily batch (runs on Hugging Face Spaces / Servers)
 # ----------------------------------------------------------------------------
 try:
-    import sys
-    # Ensure local modules are importable
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    print(f"DEBUG: sys.path is {sys.path}")
-    print(f"DEBUG: Directory contents of {os.getcwd()}: {os.listdir(os.getcwd())}")
-
     from apscheduler.schedulers.background import BackgroundScheduler
-    import run_daily_batch
+    from calls_analyser import runner as daily_runner
     import datetime
 
     def run_scheduled_job():
@@ -105,7 +99,7 @@ try:
         # For safety/updates, we might want to re-build deps or just use the global 'deps'.
         # Using global 'deps' for now as it holds the loaded secrets/config.
         bp = deps.batch_params
-        run_daily_batch.run_batch_process(
+        daily_runner.run_batch_process(
             deps, 
             day=target_date, 
             time_from_str=bp.filter_time_from, 

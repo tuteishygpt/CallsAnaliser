@@ -1,10 +1,6 @@
 """
 Script to run daily batch analysis automatically.
 Defaults to processing "yesterday's" calls.
-
-Usage:
-    python run_daily_batch.py
-    python run_daily_batch.py --date 2023-10-27 --time-from 09:00 --time-to 17:00 --call-type MISSED
 """
 import argparse
 import datetime
@@ -13,6 +9,8 @@ import sys
 from typing import List, Optional
 from dotenv import load_dotenv
 
+# We need this to ensure we can run it as a standalone script if needed
+# but mostly it will be imported by app.py
 load_dotenv()
 
 # Setup simple logging
@@ -25,10 +23,11 @@ try:
     from calls_analyser.services.gemini_batch import GeminiBatchRunner, BatchTask, guess_mime_type
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult
-    from calls_analyser.domain.exceptions import AIModelError
+    # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
+    # If run directly from outside the package context without installation
     logger.error("Could not import project dependencies. Make sure you are running from the project root.")
-    sys.exit(1)
+    # sys.exit(1) # Don't exit, let function call fail if used
 
 
 def parse_args():
@@ -134,6 +133,11 @@ def run_batch_process(
         logger.error("GOOGLE_API_KEY not found.")
         return
 
+    # Check if AI Registry populated
+    # If using auto-language, we might need a default prompt key if not reusing `batch_model_key` properly
+    # Using `deps` properties
+    
+    # We need to construct the prompt. In app.py / deps, we have `batch_language`
     lang_instruction = GeminiAIAdapter._system_instruction(deps.batch_language)
     prompt_text = deps.batch_prompt_text or ""
     merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
