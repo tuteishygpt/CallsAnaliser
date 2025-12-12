@@ -90,8 +90,6 @@ try:
     print(f"DEBUG: Directory contents of {os.getcwd()}: {os.listdir(os.getcwd())}")
 
     from apscheduler.schedulers.background import BackgroundScheduler
-
-    from apscheduler.schedulers.background import BackgroundScheduler
     import run_daily_batch
     import datetime
 
