@@ -14,7 +14,7 @@ DEFAULT_BATCH_PARAMS_PATH = os.environ.get("BATCH_PARAMS_FILE", "batch_params.js
 class BatchParams:
     """Settings that toggle Gemini BATCH integration and control chunk size."""
 
-    enable_gemini_batch: bool = False
+    enable_gemini_batch: bool = True
     batch_size: int = 20
     
     # Scheduler settings
@@ -30,7 +30,7 @@ class BatchParams:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BatchParams":
-        enable = bool(payload.get("enable_gemini_batch", False))
+        enable = bool(payload.get("enable_gemini_batch", True))
         
         # Batch size
         try:
@@ -78,14 +78,27 @@ def load_batch_params(path: str = DEFAULT_BATCH_PARAMS_PATH) -> BatchParams:
     if not path:
         return BatchParams()
 
-    if not os.path.exists(path):
-        return BatchParams()
+    # Try CWD
+    if os.path.exists(path):
+        final_path = path
+    else:
+        # Try project root (assuming this file is in calls_analyser/)
+        # calls_analyser/batch_params.py -> .. -> project_root
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(base_dir)
+        possible_path = os.path.join(project_root, os.path.basename(path))
+        if os.path.exists(possible_path):
+            final_path = possible_path
+        else:
+             print(f"DEBUG: batch_params.json not found at {path} or {possible_path}, using defaults.")
+             return BatchParams()
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(final_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return BatchParams()
         return BatchParams.from_dict(data)
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Failed to load batch_params: {e}")
         return BatchParams()
