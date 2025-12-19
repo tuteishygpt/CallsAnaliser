@@ -457,8 +457,9 @@ class UIHandlers:
 
             total = len(entries)
             prompt_override = custom_prompt_override
-            if prompt_override is None:
-                prompt_override = self.deps.batch_prompt_text or None
+            # Removed forcing prompt_override to self.deps.batch_prompt_text when None
+            # to allow AnalysisService to use default prompt logic (custom_fragment="")
+            # which aligns with runner.py/scheduler cache keys.
 
             yield (
                 gr.update(value=pd.DataFrame(), visible=False),
@@ -466,7 +467,8 @@ class UIHandlers:
                 hidden_file,
             )
 
-            if self._should_use_gemini_batch():
+            # FORCE NORMAL MODE AS REQUESTED: Skip Gemini Batch API, use local/sequential processing which checks cache/DB.
+            if False and self._should_use_gemini_batch():
                 print("DEBUG: Using Gemini BATCH mode (API)")
                 try:
                     rows, final_msg = self._run_gemini_batch_analysis(

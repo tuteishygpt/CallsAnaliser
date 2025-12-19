@@ -114,3 +114,7 @@ def build_batch_dropdown(df: pd.DataFrame):
 
 def today_str():
     return _dt.date.today().strftime("%Y-%m-%d")
+
+
+def yesterday_str():
+    return (_dt.date.today() - _dt.timedelta(days=1)).strftime("%Y-%m-%d")

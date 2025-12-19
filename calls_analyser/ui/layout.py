@@ -48,18 +48,18 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             with gr.Tab("Vochi CRM"):
                 with gr.Row():
                     tenant_tb = gr.Textbox(
-                        label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
+                        label="Tenant ID", value="Amedis", scale=1
                     )
                     date_inp = gr.Textbox(
-                        label="Date", value=utils.today_str(), placeholder="YYYY-MM-DD", scale=1
+                        label="Date", value=utils.yesterday_str(), placeholder="YYYY-MM-DD", scale=1
                     )
                     time_from_inp = gr.Textbox(
-                        label="Time from", placeholder="HH:MM", scale=1
+                        label="Time from", value="08:00", placeholder="HH:MM", scale=1
                     )
-                    time_to_inp = gr.Textbox(label="Time to", placeholder="HH:MM", scale=1)
+                    time_to_inp = gr.Textbox(label="Time to", value="20:00", placeholder="HH:MM", scale=1)
                     call_type_dd = gr.Dropdown(
                         choices=config.CALL_TYPE_OPTIONS,
-                        value="",
+                        value="0",
                         label="Call type",
                         type="value",
                         scale=1,

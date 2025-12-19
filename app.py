@@ -148,4 +148,8 @@ except Exception as e:
 
 
 if __name__ == "__main__":
-    demo.launch(allowed_paths=[os.environ.get("VOCHI_ALLOWED_PATH", "D:\\tmp")])
+    demo.launch(
+    allowed_paths=[os.environ.get("VOCHI_ALLOWED_PATH", "D:\\tmp")],
+    ssr_mode=False,  # адключаем SSR
+)
+
