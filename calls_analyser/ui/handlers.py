@@ -222,6 +222,7 @@ class UIHandlers:
                 gr.update(choices=[], value=None),
                 "🔐 Enter the password to apply the filter.",
                 gr.update(visible=True),
+                gr.update(visible=False),
             )
 
         if not self.deps.project_imports_available:
@@ -230,6 +231,7 @@ class UIHandlers:
                 gr.update(visible=False),
                 [],
                 "Project dependencies are not loaded.",
+                gr.update(visible=False),
                 gr.update(visible=False),
             )
 
@@ -258,6 +260,7 @@ class UIHandlers:
                 dd,
                 msg,
                 gr.update(visible=False),
+                gr.update(visible=False),
             )
         except Exception as exc:
             return (
@@ -265,6 +268,7 @@ class UIHandlers:
                 gr.update(visible=False),
                 gr.update(choices=[], value=None),
                 f"Load error: {exc}",
+                gr.update(visible=False),
                 gr.update(visible=False),
             )
 
@@ -360,6 +364,18 @@ class UIHandlers:
         """Захаваць умовы і закрыць акно перад стартам."""
         return (conditions_text or "").strip(), gr.update(visible=False)
 
+    def filter_batch_results(self, filter_option, full_df):
+        """Фільтрацыя вынікаў батча."""
+        if full_df is None or full_df.empty:
+            return pd.DataFrame()
+
+        if filter_option == "Needs follow-up":
+            return full_df[full_df["Needs follow-up"] == "Yes"]
+        elif filter_option == "No follow-up":
+            return full_df[full_df["Needs follow-up"] == "No"]
+        
+        return full_df
+
     def mass_analyze_custom(
         self,
         conditions_text: str,
@@ -397,6 +413,8 @@ class UIHandlers:
         empty_df = pd.DataFrame()
         hidden_df_update = gr.update(value=empty_df, visible=False)
         hidden_file = gr.update(value=None, visible=False)
+        hidden_filter = gr.update(visible=False)
+        visible_filter = gr.update(visible=True)
 
         def h3(txt: str) -> str:
             return f"### {txt}"
@@ -412,6 +430,7 @@ class UIHandlers:
                 hidden_df_update,
                 h2_error("🔐 Enter the password to run batch analysis."),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -420,6 +439,7 @@ class UIHandlers:
                 hidden_df_update,
                 h2_error("Project dependencies are not loaded."),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -428,6 +448,7 @@ class UIHandlers:
                 hidden_df_update,
                 h2_error("❌ Batch analysis is unavailable: AI model is not configured."),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -452,6 +473,7 @@ class UIHandlers:
                     hidden_df_update,
                     h3("ℹ️ No calls for the selected filter."),
                     hidden_file,
+                    hidden_filter,
                 )
                 return
 
@@ -465,6 +487,7 @@ class UIHandlers:
                 gr.update(value=pd.DataFrame(), visible=False),
                 h3(f"Starting batch analysis for {total} call(s)..."),
                 hidden_file,
+                hidden_filter,
             )
 
             # FORCE NORMAL MODE AS REQUESTED: Skip Gemini Batch API, use local/sequential processing which checks cache/DB.
@@ -479,6 +502,7 @@ class UIHandlers:
                         gr.update(value=final_df, visible=True),
                         h2_success(final_msg),
                         hidden_file,
+                        visible_filter,
                     )
                     return
                 except Exception as exc:
@@ -486,6 +510,7 @@ class UIHandlers:
                         hidden_df_update,
                         h2_error(f"❌ Gemini BATCH failed: {exc}"),
                         hidden_file,
+                        hidden_filter,
                     )
                     return
             else:
@@ -531,6 +556,7 @@ class UIHandlers:
                     gr.update(value=partial_df, visible=True),
                     h3(interim_msg),
                     hidden_file,
+                    hidden_filter,
                 )
 
             final_df = pd.DataFrame(rows)
@@ -544,6 +570,7 @@ class UIHandlers:
                 gr.update(value=final_df, visible=True),
                 h2_success(final_msg),
                 hidden_file,
+                visible_filter,
             )
 
         except Exception as exc:
@@ -551,6 +578,7 @@ class UIHandlers:
                 hidden_df_update,
                 h2_error(f"❌ Analysis failed: {exc}"),
                 hidden_file,
+                hidden_filter,
             )
             return
 

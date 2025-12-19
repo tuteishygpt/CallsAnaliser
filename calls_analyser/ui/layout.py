@@ -87,6 +87,14 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 status_fetch = gr.Markdown()
                 batch_status_md = gr.Markdown()
 
+                with gr.Row(visible=False) as batch_filter_row:
+                    filter_radio = gr.Radio(
+                        choices=["All", "Needs follow-up", "No follow-up"],
+                        value="Needs follow-up",
+                        label="Filter results",
+                        interactive=True,
+                    )
+
                 calls_df = gr.DataFrame(
                     value=pd.DataFrame(),
                     label="Call list (manual filter)",
@@ -166,17 +174,21 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         filter_btn.click(
             handlers.filter_calls,
             inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, authed, tenant_tb],
-            outputs=[calls_df, batch_results_df, row_dd, status_fetch, pwd_group],
+            outputs=[calls_df, batch_results_df, row_dd, status_fetch, pwd_group, batch_filter_row],
         )
 
         batch_btn.click(
             fn=handlers.mass_analyze,
             inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
-            outputs=[batch_results_df, batch_status_md, batch_file],
+            outputs=[batch_results_df, batch_status_md, batch_file, batch_filter_row],
         ).then(
             fn=lambda df: df,
             inputs=[batch_results_df],
             outputs=[batch_results_state],
+        ).then(
+            fn=handlers.filter_batch_results,
+            inputs=[filter_radio, batch_results_state],
+            outputs=[batch_results_df],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
@@ -212,7 +224,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 tenant_tb,
                 authed,
             ],
-            outputs=[batch_results_df, batch_status_md, batch_file],
+            outputs=[batch_results_df, batch_status_md, batch_file, batch_filter_row],
         ).then(
             fn=lambda df: df,
             inputs=[batch_results_df],
@@ -230,6 +242,12 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             outputs=[row_dd, current_uid_state, current_uid_md, url_html, audio_out, status_fetch],
         ).then(
             fn=None, js=JS_FIX_LINKS
+        )
+
+        filter_radio.change(
+            fn=handlers.filter_batch_results,
+            inputs=[filter_radio, batch_results_state],
+            outputs=[batch_results_df],
         )
 
         play_btn.click(
