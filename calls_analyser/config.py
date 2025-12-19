@@ -8,6 +8,40 @@ from calls_analyser.services.prompt import PromptTemplate
 # ---------------------------
 # Prompt templates (UI tab)
 # ---------------------------
+# ---------------------------
+# Common Prompt Body (Single Source of Truth)
+# ---------------------------
+_BATCH_PROMPT_BODY = (
+    """You are analyzing a full phone conversation between a client and a medical center employee.
+Read and understand the entire dialogue before making a decision.
+Decide whether the call needs follow-up or additional attention, and briefly explain why.
+
+A call needs follow-up if:
+
+the client is dissatisfied, complains, or shows negative emotions;
+
+the client requests a callback or information but doesn’t receive a clear answer;
+
+the employee cannot help, gives incomplete information, or ends the call abruptly;
+
+the client reports issues with booking, payment, or test results;
+
+the conversation is incomplete, interrupted, or unresolved.
+
+Make your decision based on the overall outcome of the whole conversation, not a single line.
+
+Output format (must be valid JSON; no extra text):
+
+{
+  "needs_follow_up": true | false,
+  "reason": "one short sentence explaining the decision"
+}"""
+)
+
+
+# ---------------------------
+# Prompt templates (UI tab)
+# ---------------------------
 PROMPTS = {
     "simple": PromptTemplate(
         key="simple",
@@ -54,28 +88,7 @@ PROMPTS = {
     "BATCH_PROMPT": PromptTemplate(
         key="BATCH_PROMPT",
         title="Batch Prompt",
-        body=(
-            """You are analyzing a phone conversation between a client and a medical center employee.
-Your task is to decide whether this call needs follow-up or additional attention, and briefly explain why.
-
-A call needs follow-up if:
-
-the client sounds dissatisfied, complains, or expresses negative emotions;
-
-the client asks to be called back or requests information but doesn’t get a clear answer;
-
-the employee cannot help, gives incomplete information, or ends the call abruptly;
-
-the client reports problems with booking, payment, or test results;
-
-the conversation seems incomplete or interrupted.
-
-Respond in the following format:
-Needs follow-up: Yes/No
-Reason: [short explanation — one sentence only]
-
-If everything is fine, the reason can be something like “The issue was resolved” or “Client received clear information."""
-        ),
+        body=_BATCH_PROMPT_BODY,
     ),
 }
 
@@ -93,32 +106,7 @@ MODEL_CANDIDATES = [
 # ---------------------------
 BATCH_MODEL_KEY = "models/gemini-2.5-flash-lite"
 BATCH_PROMPT_KEY = "BATCH_PROMPT"
-BATCH_PROMPT_TEXT = (
-    """You are analyzing a full phone conversation between a client and a medical center employee.
-Read and understand the entire dialogue before making a decision.
-Decide whether the call needs follow-up or additional attention, and briefly explain why.
-
-A call needs follow-up if:
-
-the client is dissatisfied, complains, or shows negative emotions;
-
-the client requests a callback or information but doesn’t receive a clear answer;
-
-the employee cannot help, gives incomplete information, or ends the call abruptly;
-
-the client reports issues with booking, payment, or test results;
-
-the conversation is incomplete, interrupted, or unresolved.
-
-Make your decision based on the overall outcome of the whole conversation, not a single line.
-
-Output format (must be valid JSON; no extra text):
-
-{
-  "needs_follow_up": true | false,
-  "reason": "one short sentence explaining the decision"
-}"""
-)
+BATCH_PROMPT_TEXT = _BATCH_PROMPT_BODY
 # ISO language code for batch (app converts to Language enum)
 BATCH_LANGUAGE_CODE = "ru"
 
