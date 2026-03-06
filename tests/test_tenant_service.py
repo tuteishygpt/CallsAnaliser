@@ -77,3 +77,21 @@ def test_resolve_requires_tenant_id_when_default_missing() -> None:
 
     with pytest.raises(SecretsError, match="Tenant id is required"):
         service.resolve()
+
+
+def test_resolve_mts_vats_tenant_configuration() -> None:
+    secrets = FakeSecrets(
+        {
+            ("tenant-mts", "TELEPHONY_PROVIDER"): "mts_vats",
+            ("tenant-mts", "MTS_DOMAIN"): "193130978.vats.mts.by",
+            ("tenant-mts", "MTS_API_KEY"): "secret-key",
+        }
+    )
+    service = TenantService(secrets, default_tenant="tenant-mts")
+
+    config = service.resolve()
+
+    assert config.provider == "mts_vats"
+    assert config.vochi_base_url == "https://193130978.vats.mts.by/crmapi/v1"
+    assert config.mts_api_key == "secret-key"
+    assert config.recording_url("uid-1") == "https://193130978.vats.mts.by/crmapi/v1/history/record/uid-1"

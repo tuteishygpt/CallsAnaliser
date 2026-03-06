@@ -13,6 +13,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
     from calls_analyser.adapters.storage.supabase_storage import SupabaseCache
+    from calls_analyser.adapters.telephony.mts_vats import MtsVatsTelephonyAdapter
     from calls_analyser.adapters.telephony.vochi import VochiTelephonyAdapter
     from calls_analyser.domain.exceptions import CallsAnalyserError
     from calls_analyser.ports.ai import AIModelPort
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     EnvSecretsAdapter = None  # type: ignore
     LocalStorageAdapter = None  # type: ignore
     SupabaseCache = None  # type: ignore
+    MtsVatsTelephonyAdapter = None  # type: ignore
     VochiTelephonyAdapter = None  # type: ignore
     CallsAnalyserError = Exception  # type: ignore
     AIModelPort = Any  # type: ignore
@@ -103,11 +105,17 @@ def _build_tenant_service(secrets_adapter: EnvSecretsAdapter) -> TenantService:
 
 def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any) -> CallLogService:
     config_obj = tenant_service.resolve()
-    telephony_adapter = VochiTelephonyAdapter(
-        base_url=config_obj.vochi_base_url,
-        client_id=config_obj.vochi_client_id,
-        bearer_token=config_obj.bearer_token,
-    )
+    if config_obj.provider == "mts_vats":
+        telephony_adapter = MtsVatsTelephonyAdapter(
+            domain=config_obj.mts_domain or config_obj.vochi_base_url,
+            api_key=config_obj.mts_api_key or "",
+        )
+    else:
+        telephony_adapter = VochiTelephonyAdapter(
+            base_url=config_obj.vochi_base_url,
+            client_id=config_obj.vochi_client_id,
+            bearer_token=config_obj.bearer_token,
+        )
     return CallLogService(telephony_adapter, storage_adapter)
 
 
