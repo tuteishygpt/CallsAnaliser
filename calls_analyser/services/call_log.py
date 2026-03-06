@@ -121,7 +121,7 @@ class CallLogService:
 
         file_name = f"{tenant.tenant_id}_{unique_id}.mp3"
         uri = self._storage.uri_for(file_name)
-        remote_uri = f"{tenant.vochi_base_url.rstrip('/')}/calllogs/{tenant.vochi_client_id}/{unique_id}"
+        remote_uri = tenant.recording_url(unique_id)
         if not self._storage.exists(uri):
             recording = self._telephony.get_recording(unique_id=unique_id, tenant_id=tenant.tenant_id)
             uri = self._storage.save_file(recording.content, file_name)

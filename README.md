@@ -15,3 +15,22 @@ To enable Gemini BATCH processing for mass analysis, adjust `batch_params.json` 
 
 - `enable_gemini_batch`: set to `true` to send batch jobs through the Gemini BATCH API instead of per-call requests.
 - `batch_size`: how many recordings are packed into a single Gemini BATCH job (minimum 1).
+
+## Tenant provider configuration
+
+By default the app uses **Vochi** provider (`TELEPHONY_PROVIDER=vochi`).
+
+For a new tenant on **MTS VATS**, set tenant-scoped environment variables:
+
+- `<TENANT>_TELEPHONY_PROVIDER=mts_vats`
+- `<TENANT>_MTS_DOMAIN=193130978.vats.mts.by`
+- `<TENANT>_MTS_API_KEY=...`
+
+Field mapping used by MTS VATS integration:
+
+- `uid` → `CallLogEntry.unique_id`
+- `start` → `CallLogEntry.started_at`
+- `client` → `CallLogEntry.caller_id`
+- `destination` → `CallLogEntry.destination`
+- `duration` → `CallLogEntry.duration_seconds`
+- `record`/`history/record/{uid}` → recording download URL

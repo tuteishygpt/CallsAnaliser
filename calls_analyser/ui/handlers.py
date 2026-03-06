@@ -296,10 +296,7 @@ class UIHandlers:
             tenant = self.deps.tenant_service.resolve(tenant_id or None)
             handle = self.deps.call_log_service.ensure_recording(unique_id, tenant)
 
-            listen_url = (
-                f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
-                f"{tenant.vochi_client_id}/{unique_id}"
-            )
+            listen_url = tenant.recording_url(unique_id)
             html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
 
             return html, handle.local_uri, "Ready ✅"
@@ -741,10 +738,7 @@ class UIHandlers:
             try:
                 tenant = self.deps.tenant_service.resolve(tenant_id or None)
                 handle = self.deps.call_log_service.ensure_recording(uid, tenant)
-                listen_url = (
-                    f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
-                    f"{tenant.vochi_client_id}/{uid}"
-                )
+                listen_url = tenant.recording_url(uid)
                 html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
                 audio_uri = handle.local_uri
                 status_msg = "Ready ✅"
