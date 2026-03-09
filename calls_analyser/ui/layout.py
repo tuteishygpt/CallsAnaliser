@@ -28,7 +28,7 @@ JS_FIX_LINKS = """
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
     with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
         gr.Markdown(
-            "# Vochi CRM → MP3 → AI analysis\n"
+            "# Calls→ audio → AI analysis\n"
             "*Filter calls by date, time and type, listen to recordings and run batch AI analysis.*"
         )
 
@@ -48,7 +48,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             with gr.Tab("Vochi CRM"):
                 with gr.Row():
                     tenant_tb = gr.Textbox(
-                        label="Tenant ID", value="Amedis", scale=1
+                        label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
                     )
                     date_inp = gr.Textbox(
                         label="Date", value=utils.yesterday_str(), placeholder="YYYY-MM-DD", scale=1
@@ -68,7 +68,11 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                     filter_btn = gr.Button("Filter", variant="primary", scale=0)
                     batch_btn = gr.Button("Batch analyze", variant="secondary", scale=0)
                     batch_custom_btn = gr.Button(
-                        "Batch analyze custom", variant="secondary", scale=0
+                        "Batch analyze custom",
+                        variant="secondary",
+                        scale=0,
+                        # Пакажам кнопку толькі калі BATCH_CUSTOM == "on"
+                        visible=(getattr(config, "BATCH_CUSTOM", "") == "on"),
                     )
                     save_btn = gr.Button("Save to file", scale=0)
 

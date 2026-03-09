@@ -59,13 +59,21 @@ class UIHandlers:
 
     def _fill_row_with_text(self, row_data, entry, tenant, text):
         needs, reason = self._parse_follow_up_fields(text)
-        link = (
-            f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
-            f"{tenant.vochi_client_id}/{entry.unique_id}"
-        )
+        # Вызначаем спасылку на запіс у залежнасці ад пастаўшчыка тэлефаніі.
+        if getattr(tenant, "provider", "").lower() == "mts_vats":
+            raw = getattr(entry, "raw", {}) or {}
+            record_url = str(raw.get("record") or "").strip()
+            # Калі ў сырых дадзеных ёсць прамы URL запісу (МТС VATS),
+            # выкарыстоўваем яго; інакш падаем на recording_url().
+            link = record_url or tenant.recording_url(entry.unique_id)
+        else:
+            link = (
+                f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
+                f"{tenant.vochi_client_id}/{entry.unique_id}"
+            )
         row_data["Needs follow-up"] = needs
         row_data["Reason"] = reason
-        row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>'
+        row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""
         row_data["Status"] = "✅"
 
     @staticmethod
@@ -278,25 +286,39 @@ class UIHandlers:
             return "Project dependencies are not loaded.", None, ""
 
         unique_id = None
+        row = None
 
         if selected_idx is not None:
             try:
+                # Калі карыстальнік перадаў прамы UID радком
                 if not str(selected_idx).isdigit():
                     unique_id = str(selected_idx)
+                # Калі выбар – індэкс радка ў табліцы
                 elif df is not None and not df.empty:
                     row = df.iloc[int(selected_idx)]
-                    unique_id = str(row.get("UniqueId"))
+                    # Спачатку спрабуем стандартнае поле UniqueId (VoChi, батч-вынікі)
+                    value = row.get("UniqueId")
+                    # Fallback для іншых API (напрыклад, МТС VATS, дзе ёсць uid)
+                    if not value:
+                        for key in ("uid", "Uid", "UID", "unique_id", "UniqueID", "id", "Id", "ID"):
+                            if key in row and row.get(key):
+                                value = row.get(key)
+                                break
+                    unique_id = str(value or "").strip()
             except (ValueError, IndexError):
                 return "<em>Invalid selection.</em>", None, ""
 
-        if not unique_id:
+        # Адфільтраваць выпадкі, калі UID фактычна не зададзены
+        if not unique_id or str(unique_id).strip().lower() in {"none", "nan"}:
             return "<em>Select a call to play.</em>", None, ""
 
         try:
             tenant = self.deps.tenant_service.resolve(tenant_id or None)
             handle = self.deps.call_log_service.ensure_recording(unique_id, tenant)
 
-            listen_url = tenant.recording_url(unique_id)
+            # Для VoChi выкарыстоўваем стандартны URL, для МТС аддаем перавагу
+            # фактычнаму URL запісу з тэлефоннага адаптара (handle.source_uri).
+            listen_url = handle.source_uri or tenant.recording_url(unique_id)
             html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
 
             return html, handle.local_uri, "Ready ✅"
@@ -738,7 +760,7 @@ class UIHandlers:
             try:
                 tenant = self.deps.tenant_service.resolve(tenant_id or None)
                 handle = self.deps.call_log_service.ensure_recording(uid, tenant)
-                listen_url = tenant.recording_url(uid)
+                listen_url = handle.source_uri or tenant.recording_url(uid)
                 html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
                 audio_uri = handle.local_uri
                 status_msg = "Ready ✅"

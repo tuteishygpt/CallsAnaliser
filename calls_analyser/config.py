@@ -12,7 +12,7 @@ from calls_analyser.services.prompt import PromptTemplate
 # Common Prompt Body (Single Source of Truth)
 # ---------------------------
 _BATCH_PROMPT_BODY = (
-    """You are analyzing a full phone conversation between a client and a medical center employee.
+    """You are analyzing a full phone conversation between a client and a call center employee.
 Read and understand the entire dialogue before making a decision.
 Decide whether the call needs follow-up or additional attention, and briefly explain why.
 
@@ -24,7 +24,7 @@ the client requests a callback or information but doesn’t receive a clear answ
 
 the employee cannot help, gives incomplete information, or ends the call abruptly;
 
-the client reports issues with booking, payment, or test results;
+the client reports issues with booking, payment, or the status or outcome of a service or product;
 
 the conversation is incomplete, interrupted, or unresolved.
 
@@ -47,12 +47,12 @@ PROMPTS = {
         key="simple",
         title="Simple",
         body=(
-            "You are a call-center conversation analyst for a medical clinic. From the call recording, provide a brief summary:\n"
-            "- Purpose of the call (appointment / results / complaint / billing / other).\n"
-            "- Patient intent and expectations.\n"
-            "- Outcome (booked / call-back / routed / unresolved).\n"
+            "You are a call-center conversation analyst for a customer service team. From the call recording, provide a brief summary:\n"
+            "- Purpose of the call (order / information / complaint / billing / other).\n"
+            "- Client intent and expectations.\n"
+            "- Outcome (resolved / call-back / routed / unresolved).\n"
             "- Next steps (owner and when).\n"
-            "- Patient emotion (1–5) and agent tone (1–5).\n"
+            "- Client emotion (1–5) and agent tone (1–5).\n"
             "- Alerts: urgency/risks/privacy.\n\n"
             "Keep it short (6–8 lines). End with a line: ‘Service quality rating: X/5’ and one sentence explaining the rating."
         ),
@@ -64,9 +64,9 @@ PROMPTS = {
             "Act as a senior service analyst. Analyze the call using this structure:\n"
             "1) Quick overview: reason for the call, intent, key facts, urgency (low/medium/high).\n"
             "2) Call flow (2–4 bullets): what was asked/answered, where friction occurred.\n"
-            "3) Outcomes & tasks: concrete next actions for clinic/patient with timeframes.\n"
-            "4) Emotions & empathy: patient mood; agent empathy (0–5).\n"
-            "5) Procedural compliance: identity verification, disclosure of recording (if stated), no off-protocol medical advice, data accuracy.\n"
+            "3) Outcomes & tasks: concrete next actions for company/client with timeframes.\n"
+            "4) Emotions & empathy: client mood; agent empathy (0–5).\n"
+            "5) Procedural compliance: identity verification, disclosure of recording (if stated), no inappropriate or unauthorized advice, data accuracy.\n"
             "6) Quality rating (0–100) using rubric: greeting, verification, accuracy, empathy, issue resolution (each 0–20)."
         ),
     ),
@@ -75,13 +75,13 @@ PROMPTS = {
         title="Detailed",
         body=(
             "You are a quality & operations analyst. Provide an in-depth analysis:\n"
-            "A) Segmentation: split the call into stages with approximate timestamps (if available) and roles (Patient/Agent).\n"
-            "B) Structured data for booking: full name (if stated), date of birth, phone, symptoms/complaints (list), onset/duration, possible pain level 0–10 (if mentioned), required specialist/service, preferred time windows, constraints.\n"
-            "C) Triage & risks: class (routine/urgent/emergency), red flags, whether immediate escalation is needed.\n"
+            "A) Segmentation: split the call into stages with approximate timestamps (if available) and roles (Client/Agent).\n"
+            "B) Structured data for request/booking: full name (if stated), contact details, description of the issue or request (list), relevant context, required product/service, preferred time windows, constraints.\n"
+            "C) Priority & risks: urgency level (low/medium/high), key risks, whether escalation is needed.\n"
             "D) Compliance audit: identity/privacy checks, recording disclosure, consent to data processing, booking policies.\n"
             "E) Conversation metrics: talk ratio (agent/patient), interruptions, long pauses, notable keywords.\n"
             "F) Coaching for the agent: 3–5 concrete improvements with sample phrasing.\n\n"
-            "Deliver: (1) A short patient-chart summary (2–3 sentences). (2) A task table with columns: priority, owner, due."
+            "Deliver: (1) A short client-case summary (2–3 sentences). (2) A task table with columns: priority, owner, due."
         ),
     ),
     # Batch-specific template (optional; batch uses custom prompt text, but keeping a template makes it discoverable)
@@ -110,6 +110,12 @@ BATCH_PROMPT_TEXT = _BATCH_PROMPT_BODY
 # ISO language code for batch (app converts to Language enum)
 BATCH_LANGUAGE_CODE = "ru"
 
+# Flag for custom batch behaviour.
+# Значэнні:
+# - "off" (па змаўчанні) — кнопка кастомнага батча схаваная
+# - "on" — кнопка бачная
+BATCH_custom = "off"
+
 # ---------------------------
 # Custom batch prompt configuration
 # ---------------------------
@@ -122,13 +128,13 @@ The client asks to be called back or requests information but does not receive a
 
 The employee cannot help for reasons related to incorrect handling, lack of knowledge, or poor communication, but not due to the unavailability of a specialist or service.
 
-The client reports problems with booking, payment, or test results.
+The client reports problems with booking, payment, or the status or outcome of a service or product.
 
 The conversation appears incomplete, interrupted, or unresolved for reasons other than service or specialist unavailability."""
 )
 
 BATCH_CUSTOM_PROMPT_TEMPLATE = (
-    """You are analyzing a phone call between a client and a medical call center employee using the following rules and conditions:\n\n"
+    """You are analyzing a phone call between a client and a call center employee using the following rules and conditions:\n\n"
     "{{CONDITIONS}}\n\n"
     "Your task is to determine whether this call requires follow-up or additional attention, and briefly summarize the outcome.\n\n"
     "Respond strictly in the following format:\n"

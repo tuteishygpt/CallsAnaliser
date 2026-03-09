@@ -20,6 +20,10 @@ class MtsVatsTelephonyAdapter(TelephonyPort):
         self._api_base = f"https://{self._domain}/crmapi/v1"
         self._api_key = api_key
         self._http = http_client or requests.Session()
+        # Cache mapping from unique_id (uid) to direct recording URL from history payload.
+        # This allows us to use provider-native links like those in the `record` field
+        # when available, while still supporting a conventional fallback path.
+        self._record_urls: dict[str, str] = {}
 
     @staticmethod
     def _normalize_domain(value: str) -> str:
@@ -52,7 +56,6 @@ class MtsVatsTelephonyAdapter(TelephonyPort):
         params: dict[str, str | int] = {
             "start": self._format_utc(day, time_from or time.min),
             "end": self._format_utc(day, time_to or time.max.replace(microsecond=0)),
-            "limit": 100,
             "type": self._map_call_type(call_type),
         }
         try:
@@ -72,6 +75,13 @@ class MtsVatsTelephonyAdapter(TelephonyPort):
             unique_id = str(item.get("uid") or "")
             if not unique_id:
                 continue
+            # Фільтруем званкі без даступнай спасылкі на запіс:
+            # калі поле `record` адсутнічае або роўна null/пустае, такі званок не вяртаем.
+            record_url = item.get("record")
+            if not (isinstance(record_url, str) and record_url.strip()):
+                continue
+            # Захоўваем прамы URL запісу для наступнага get_recording(...)
+            self._record_urls[unique_id] = record_url.strip()
             started_at = self._parse_started_at(item.get("start"))
             duration = item.get("duration")
             duration_seconds = int(duration) if str(duration or "").isdigit() else None
@@ -117,12 +127,15 @@ class MtsVatsTelephonyAdapter(TelephonyPort):
     def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
         del tenant_id
         # MTS VATS history payload exposes a direct recording URL in `record`.
-        # As a safe fallback, try a conventional path under the CRM API.
-        fallback_url = f"{self._api_base}/history/record/{unique_id}"
+        # Спачатку спрабуем выкарыстаць яго, калі ён быў атрыманы ў list_calls().
+        url = self._record_urls.get(unique_id)
+        if not url:
+            # Калі прамы URL невядомы, выкарыстоўваем кансерватыўны fallback
+            url = f"{self._api_base}/history/record/{unique_id}"
         try:
-            response = self._http.get(fallback_url, headers=self._headers(), timeout=120)
+            response = self._http.get(url, headers=self._headers(), timeout=120)
             response.raise_for_status()
         except requests.RequestException as exc:
             raise TelephonyError(f"Failed to fetch MTS VATS recording {unique_id}: {exc}") from exc
 
-        return Recording(unique_id=unique_id, content=response.content, source_uri=fallback_url)
+        return Recording(unique_id=unique_id, content=response.content, source_uri=url)
