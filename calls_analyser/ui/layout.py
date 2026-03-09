@@ -26,7 +26,7 @@ JS_FIX_LINKS = """
 
 
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
-    with gr.Blocks(title="Vochi CRM Call Logs (Gradio)") as demo:
+    with gr.Blocks(title="Calls Call Logs (Gradio)") as demo:
         gr.Markdown(
             "# Calls→ audio → AI analysis\n"
             "*Filter calls by date, time and type, listen to recordings and run batch AI analysis.*"
@@ -45,7 +45,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             pwd_btn = gr.Button("Unlock", variant="primary")
 
         with gr.Tabs() as tabs:  # noqa: F841
-            with gr.Tab("Vochi CRM"):
+            with gr.Tab("Calls"):
                 with gr.Row():
                     tenant_tb = gr.Textbox(
                         label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
