@@ -77,7 +77,13 @@ def _register_gemini_models(registry: ProviderRegistry, secrets_adapter: Any) ->
         return
     for _title, model in config.MODEL_CANDIDATES:
         try:
-            registry.register(model, GeminiAIAdapter(api_key=api_key, model=model))
+            registry.register(
+                model,
+                GeminiAIAdapter(
+                    api_key=api_key,
+                    model=model,
+                ),
+            )
         except CallsAnalyserError:
             continue
 
@@ -126,7 +132,7 @@ def build_dependencies() -> AppDependencies:
         # minimal fallbacks that keep the UI responsive even without deps
         class MockAdapter:
             def get_optional_secret(self, _):  # pragma: no cover - simple stub
-                return os.environ.get("GOOGLE_API_KEY")
+                return os.environ.get(_)
 
         model_options: List[Tuple[str, str]] = []
         model_choices = model_options or [MODEL_PLACEHOLDER_CHOICE]
