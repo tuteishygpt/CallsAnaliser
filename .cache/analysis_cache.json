@@ -2699,5 +2699,32 @@
       "lang": "ru",
       "tenant": "Multicom"
     }
+  },
+  "[\"Multicom\", \"Q837CBSDOO000035\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"Клиент получил исчерпывающую информацию о недоступности нужной услуги и завершил разговор.\"\n}\n```",
+    "model": "projects/canvas-genius-492412-c3/locations/global/publishers/google/models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Multicom"
+    }
+  },
+  "[\"Multicom\", \"Q837CBETOO000035\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент столкнулся с изменением цены на товар, которое не было ему своевременно сообщено, и требуется уточнение причин такого изменения.\"\n}\n```",
+    "model": "projects/canvas-genius-492412-c3/locations/global/publishers/google/models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Multicom"
+    }
+  },
+  "[\"Multicom\", \"Q441RFT7P4000037\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент не получил четкого ответа на свой вопрос о материале культиватора, что требует дополнительного уточнения.\"\n}\n```",
+    "model": "projects/canvas-genius-492412-c3/locations/global/publishers/google/models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Multicom"
+    }
   }
 }

@@ -43,9 +43,15 @@ class GeminiAIAdapter(AIModelPort):
             raise AIModelError("google-genai library is not available")
 
         self._api_key = api_key
-        self._model = model
-        self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+        self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3")
         self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+
+        # When using API key for Vertex, we explicitly format the model string with project and location
+        if self._project and self._location and api_key and not model.startswith("projects/"):
+            base_model = model.replace("models/", "")
+            self._model = f"projects/{self._project}/locations/{self._location}/publishers/google/models/{base_model}"
+        else:
+            self._model = model
 
         if not self._api_key:
             raise AIModelError(
@@ -68,15 +74,12 @@ class GeminiAIAdapter(AIModelPort):
             "vertexai": True,
             "api_key": api_key,
         }
-        if self._project:
-            kwargs["project"] = self._project
-        if self._location:
-            kwargs["location"] = self._location
 
+        # google-genai throws ValueError if both api_key and project/location are provided
+        # Therefore, when using an API key, we must rely on the key itself or the model_id string
+        # to route the request appropriately.
         logger.info(
-            "Creating Vertex AI client (project=%s, location=%s)",
-            self._project or "<env>",
-            self._location,
+            "Creating Vertex AI client (api_key provided, ignoring project/location for client init)"
         )
         return genai.Client(**kwargs)
 
