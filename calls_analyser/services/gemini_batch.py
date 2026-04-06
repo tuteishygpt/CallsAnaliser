@@ -44,6 +44,19 @@ class GeminiBatchRunner:
         self._model = model
         self._client = genai.Client(
             vertexai=True,
+    def __init__(self, api_key: str, model: str, project: str, location: str = "global") -> None:
+        if genai is None:
+            raise AIModelError("google-genai library is not available")
+        if not project:
+            raise AIModelError("GOOGLE_CLOUD_PROJECT is not configured")
+        self._api_key = api_key
+        self._model = model
+        self._project = project
+        self._location = location
+        self._client = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
             api_key=api_key,
         )
 

@@ -66,14 +66,16 @@ class AppDependencies:
 
 
 MODEL_PLACEHOLDER_CHOICE = (
-    "Configure GOOGLE_API_KEY to enable Gemini models",
+    "Configure Vertex (GOOGLE_CLOUD_PROJECT + GOOGLE_API_KEY) to enable Gemini models",
     "",
 )
 
 
 def _register_gemini_models(registry: ProviderRegistry, secrets_adapter: Any) -> None:
     api_key = secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
-    if not api_key:
+    project = secrets_adapter.get_optional_secret("GOOGLE_CLOUD_PROJECT")
+    location = secrets_adapter.get_optional_secret("GOOGLE_CLOUD_LOCATION") or "global"
+    if not api_key or not project:
         return
     for _title, model in config.MODEL_CANDIDATES:
         try:
@@ -82,6 +84,8 @@ def _register_gemini_models(registry: ProviderRegistry, secrets_adapter: Any) ->
                 GeminiAIAdapter(
                     api_key=api_key,
                     model=model,
+                    project=project,
+                    location=location,
                 ),
             )
         except CallsAnalyserError:
@@ -155,7 +159,7 @@ def build_dependencies() -> AppDependencies:
             model_options=model_options,
             model_choices=model_choices,
             model_default=model_default,
-            model_info="Add GOOGLE_API_KEY to secrets and reload to enable models",
+            model_info="Add GOOGLE_CLOUD_PROJECT and GOOGLE_API_KEY to secrets and reload to enable models",
             batch_prompt_key=config.BATCH_PROMPT_KEY,
             batch_prompt_text=config.BATCH_PROMPT_TEXT,
             batch_model_key=config.BATCH_MODEL_KEY or model_default or "",
@@ -192,7 +196,7 @@ def build_dependencies() -> AppDependencies:
     model_info = (
         "Select an AI model for call analysis"
         if model_options
-        else "Add GOOGLE_API_KEY to secrets and reload to enable models"
+        else "Add GOOGLE_CLOUD_PROJECT and GOOGLE_API_KEY to secrets and reload to enable models"
     )
 
     try:
