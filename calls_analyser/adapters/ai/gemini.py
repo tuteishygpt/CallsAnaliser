@@ -1,4 +1,4 @@
-"""Google Gemini AI adapter."""
+"""Google Gemini AI adapter – Vertex AI only."""
 from __future__ import annotations
 
 import importlib
@@ -16,12 +16,18 @@ logger = logging.getLogger(__name__)
 _genai_module = importlib.util.find_spec("google.genai")
 if _genai_module is not None:  # pragma: no cover - optional dependency
     genai = importlib.import_module("google.genai")  # type: ignore
+    genai_types = importlib.import_module("google.genai.types")  # type: ignore
 else:  # pragma: no cover - optional dependency
     genai = None  # type: ignore
+    genai_types = None  # type: ignore
 
 
 class GeminiAIAdapter(AIModelPort):
-    """Adapter around the google-genai client."""
+    """Adapter around the google-genai client.
+
+    Only Vertex AI mode is supported (``vertexai=True``).
+    Using the Developer-API mode will raise ``AIModelError``.
+    """
 
     provider_name = "gemini"
 
@@ -33,10 +39,20 @@ class GeminiAIAdapter(AIModelPort):
         project: Optional[str] = None,
         location: Optional[str] = None,
     ) -> None:
+        if genai is None:
+            raise AIModelError("google-genai library is not available")
+
         self._api_key = api_key
         self._model = model
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+
+        if not self._api_key:
+            raise AIModelError(
+                "GOOGLE_API_KEY is not configured. "
+                "Vertex AI requires a valid API key."
+            )
+
         self._client_factory = client_factory or self._default_factory
         self._client = self._client_factory(self._api_key)
 
@@ -44,15 +60,25 @@ class GeminiAIAdapter(AIModelPort):
         self,
         api_key: Optional[str],
     ) -> Any:  # pragma: no cover - requires dependency
-        if genai is None:
-            raise AIModelError("google-genai library is not available")
-        if not api_key:
-            raise AIModelError("GOOGLE_API_KEY is not configured")
+        """Create a genai.Client in Vertex AI mode.
 
-        return genai.Client(
-            vertexai=True,
-            api_key=api_key,
+        Raises ``AIModelError`` if the library or key is missing.
+        """
+        kwargs: dict[str, Any] = {
+            "vertexai": True,
+            "api_key": api_key,
+        }
+        if self._project:
+            kwargs["project"] = self._project
+        if self._location:
+            kwargs["location"] = self._location
+
+        logger.info(
+            "Creating Vertex AI client (project=%s, location=%s)",
+            self._project or "<env>",
+            self._location,
         )
+        return genai.Client(**kwargs)
 
     @staticmethod
     def _is_retryable_error(exc: Exception) -> bool:
@@ -82,12 +108,15 @@ class GeminiAIAdapter(AIModelPort):
                 if not audio_bytes:
                     raise AIModelError("Audio source must provide either a path or content")
 
-                # Pass audio as inline bytes (limited to 20MB in Vertex AI)
-                audio_part = {"inline_data": {"data": audio_bytes, "mime_type": "audio/mpeg"}}
+                # Pass audio as inline bytes via Vertex AI (limited to 20 MB)
+                audio_part = genai_types.Part.from_bytes(
+                    data=audio_bytes,
+                    mime_type="audio/wav",
+                )
 
                 system_instruction = self._system_instruction(lang)
                 merged_prompt = f"[SYSTEM INSTRUCTION: {system_instruction}]\n\n{prompt}"
-                
+
                 response = client.models.generate_content(
                     model=self._model,
                     contents=[audio_part, merged_prompt],
