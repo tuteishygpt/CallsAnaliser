@@ -83,16 +83,9 @@ class GeminiBatchRunner:
         if not chunk:
             return
 
-        uploaded_file_names: List[str] = []
         uploaded_jsonl_name: Optional[str] = None
 
         try:
-            for task in chunk:
-                uploaded = self._client.files.upload(file=task.path)
-                task.file_uri = uploaded.uri
-                task.mime_type = uploaded.mime_type or task.mime_type
-                uploaded_file_names.append(uploaded.name)
-
             with tempfile.TemporaryDirectory() as tmpdir:
                 jsonl_path = os.path.join(tmpdir, f"batch_input_{chunk_index:03}.jsonl")
                 self._prepare_chunk_jsonl(chunk, jsonl_path, prompt_text, chunk_index)
@@ -108,11 +101,6 @@ class GeminiBatchRunner:
             file_content = self._client.files.download(file=dest_file_name)
             self._process_results_jsonl_bytes(file_content, results)
         finally:
-            for name in uploaded_file_names:
-                try:
-                    self._client.files.delete(name=name)
-                except Exception:  # pragma: no cover - cleanup best effort
-                    pass
             if uploaded_jsonl_name:
                 try:
                     self._client.files.delete(name=uploaded_jsonl_name)
@@ -144,15 +132,21 @@ class GeminiBatchRunner:
 
     @staticmethod
     def _build_parts_for_task(task: BatchTask, prompt_text: str) -> List[Dict[str, Any]]:
+        import base64
         clean_prompt = (prompt_text or "").strip()
         parts: List[Dict[str, Any]] = []
         if clean_prompt:
             parts.append({"text": clean_prompt})
+            
+        with open(task.path, "rb") as f:
+            audio_data = f.read()
+        b64_str = base64.b64encode(audio_data).decode("utf-8")
+        
         parts.append(
             {
-                "file_data": {
+                "inline_data": {
                     "mime_type": task.mime_type,
-                    "file_uri": task.file_uri,
+                    "data": b64_str,
                 }
             }
         )

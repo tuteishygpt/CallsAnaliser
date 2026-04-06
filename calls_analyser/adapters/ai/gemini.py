@@ -73,22 +73,24 @@ class GeminiAIAdapter(AIModelPort):
         max_retries = 5
 
         for attempt in range(max_retries):
-            uploaded_name: Optional[str] = None
             try:
-                if getattr(audio, "path", None):
-                    uploaded = client.files.upload(file=getattr(audio, "path"))
-                else:
-                    uploaded = client.files.upload_bytes(
-                        file=getattr(audio, "content"),
-                        mime_type="audio/mpeg",
-                    )
+                audio_bytes = getattr(audio, "content", None)
+                if not audio_bytes and getattr(audio, "path", None):
+                    with open(getattr(audio, "path"), "rb") as f:
+                        audio_bytes = f.read()
 
-                uploaded_name = getattr(uploaded, "name", None)
+                if not audio_bytes:
+                    raise AIModelError("Audio source must provide either a path or content")
+
+                # Pass audio as inline bytes (limited to 20MB in Vertex AI)
+                audio_part = {"inline_data": {"data": audio_bytes, "mime_type": "audio/mpeg"}}
+
                 system_instruction = self._system_instruction(lang)
                 merged_prompt = f"[SYSTEM INSTRUCTION: {system_instruction}]\n\n{prompt}"
+                
                 response = client.models.generate_content(
                     model=self._model,
-                    contents=[uploaded, merged_prompt],
+                    contents=[audio_part, merged_prompt],
                 )
                 text = getattr(response, "text", None)
                 if not text:
@@ -117,12 +119,6 @@ class GeminiAIAdapter(AIModelPort):
                 if is_retryable:
                     logger.error("Gemini API failed after %s attempts: %s", max_retries, exc)
                 raise AIModelError(f"Gemini call failed: {exc}") from exc
-            finally:
-                if uploaded_name:
-                    try:
-                        client.files.delete(name=uploaded_name)
-                    except Exception:  # pragma: no cover - cleanup best effort
-                        pass
 
     @staticmethod
     def _system_instruction(lang: Language) -> str:
