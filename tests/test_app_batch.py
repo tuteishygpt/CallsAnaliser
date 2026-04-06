@@ -79,9 +79,10 @@ def test_ui_mass_analyze_requires_authentication() -> None:
     result = list(app.ui_mass_analyze("2024-01-01", "", "", "", "tenant", False))
 
     assert len(result) == 1
-    df_update, message, file_update = result[0]
+    df_update, message, file_update, filter_update = result[0]
     assert df_update["visible"] is False
     assert file_update["visible"] is False
+    assert filter_update["visible"] is False
     assert "Enter the password" in message
 
 
@@ -91,12 +92,13 @@ def test_ui_mass_analyze_reports_absence_of_calls(monkeypatch: pytest.MonkeyPatc
     result = list(app.ui_mass_analyze("2024-02-10", "", "", "", "tenant", True))
 
     assert len(result) == 1
-    df_update, message, file_update = result[0]
+    df_update, message, file_update, filter_update = result[0]
     assert isinstance(df_update["value"], pd.DataFrame)
     assert df_update["value"].empty
     assert df_update["visible"] is False
     assert message == "### ℹ️ No calls for the selected filter."
     assert file_update["visible"] is False
+    assert filter_update["visible"] is False
 
 
 def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,12 +130,14 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
 
     assert len(result) == 4
 
-    initial_df_update, initial_message, _ = result[0]
+    initial_df_update, initial_message, _, initial_filter = result[0]
     assert initial_message == "### Starting batch analysis for 2 call(s)..."
     assert initial_df_update["visible"] is False
+    assert initial_filter["visible"] is False
 
-    partial_df_update, partial_message, _ = result[1]
+    partial_df_update, partial_message, _, partial_filter = result[1]
     assert "Analyzing 1/2" in partial_message
+    assert partial_filter["visible"] is False
     partial_df = partial_df_update["value"]
     assert list(partial_df["Status"]) == ["✅"]
     assert list(partial_df["Needs follow-up"]) == ["Yes"]
@@ -142,23 +146,24 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
         "<a href=\"https://crm.example/api/calllogs/client/call-1\" target=\"_blank\">Listen</a>"
     )
 
-    error_df_update, error_message, _ = result[2]
+    error_df_update, error_message, _, error_filter = result[2]
     assert "Analyzing 2/2" in error_message
+    assert error_filter["visible"] is False
     error_df = error_df_update["value"]
     assert list(error_df["Status"]) == ["✅", "❌"]
     assert error_df.iloc[1]["Reason"].startswith("❌ network down")
     assert error_df.iloc[1]["Link"] == ""
 
-    final_df_update, final_message, final_file = result[3]
+    final_df_update, final_message, final_file, final_filter = result[3]
     assert final_message == "## ✅ Batch analysis completed. Found: 2, processed successfully: 1"
     final_df = final_df_update["value"]
     assert isinstance(final_df, pd.DataFrame)
     assert list(final_df["Status"]) == ["✅", "❌"]
     assert final_file["visible"] is False
+    assert final_filter["visible"] is True
 
     assert analysis is not None
     assert [call[0] for call in analysis.calls] == ["call-1", "call-2"]
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
-

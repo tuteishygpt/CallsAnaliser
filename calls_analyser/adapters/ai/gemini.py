@@ -1,6 +1,7 @@
 """Google Gemini AI adapter."""
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Mapping, Optional
 
 import importlib
@@ -29,17 +30,28 @@ class GeminiAIAdapter(AIModelPort):
         self,
         api_key: str,
         model: str,
-        client_factory: Optional[Callable[[str], Any]] = None,
+        project: Optional[str] = None,
+        location: Optional[str] = None,
+        client_factory: Optional[Callable[[str, str, str], Any]] = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
+        self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+        self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
         self._client_factory = client_factory or self._default_factory
-        self._client = self._client_factory(api_key)
+        self._client = self._client_factory(api_key, self._project, self._location)
 
-    def _default_factory(self, api_key: str) -> Any:  # pragma: no cover - requires dependency
+    def _default_factory(self, api_key: str, project: str, location: str) -> Any:  # pragma: no cover - requires dependency
         if genai is None:
             raise AIModelError("google-genai library is not available")
-        return genai.Client(api_key=api_key)
+        if not project:
+            raise AIModelError("GOOGLE_CLOUD_PROJECT is not configured")
+        return genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            api_key=api_key,
+        )
 
     def analyze(
         self,
