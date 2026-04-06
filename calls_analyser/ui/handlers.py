@@ -98,9 +98,8 @@ class UIHandlers:
 
     def _run_gemini_batch_analysis(self, entries, tenant, prompt_override):
         api_key = self.deps.secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
-        project = self.deps.secrets_adapter.get_optional_secret("GOOGLE_CLOUD_PROJECT")
-        if not api_key or not project:
-            raise AIModelError("Vertex config is incomplete: set GOOGLE_CLOUD_PROJECT and GOOGLE_API_KEY")
+        if not api_key:
+            raise AIModelError("Vertex config is incomplete: set GOOGLE_API_KEY")
 
         prompt_text = prompt_override or self.deps.batch_prompt_text or ""
         lang_instruction = GeminiAIAdapter._system_instruction(self.deps.batch_language)
@@ -155,7 +154,7 @@ class UIHandlers:
 
         # Run batch only for missing tasks
         if tasks:
-            runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key, project=project)
+            runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key)
             result_map = runner.run_batch(
                 tasks,
                 merged_prompt,

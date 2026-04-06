@@ -1,12 +1,15 @@
 """Google Gemini AI adapter."""
 from __future__ import annotations
 
-import os
-from typing import Any, Callable, Mapping, Optional
-
 import importlib
 import logging
+import os
 import time
+from typing import Any, Callable, Mapping, Optional
+
+from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.domain.models import AnalysisResult, Language
+from calls_analyser.ports.ai import AIModelPort, AudioSource
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +18,6 @@ if _genai_module is not None:  # pragma: no cover - optional dependency
     genai = importlib.import_module("google.genai")  # type: ignore
 else:  # pragma: no cover - optional dependency
     genai = None  # type: ignore
-
-from calls_analyser.domain.exceptions import AIModelError
-from calls_analyser.domain.models import AnalysisResult, Language
-from calls_analyser.ports.ai import AIModelPort, AudioSource
 
 
 class GeminiAIAdapter(AIModelPort):
@@ -33,33 +32,32 @@ class GeminiAIAdapter(AIModelPort):
         client_factory: Optional[Callable[[Optional[str]], Any]] = None,
         project: Optional[str] = None,
         location: Optional[str] = None,
-        client_factory: Optional[Callable[[str, str, str], Any]] = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
         self._client_factory = client_factory or self._default_factory
-        self._client = self._client_factory(api_key, self._project, self._location)
+        self._client = self._client_factory(self._api_key)
 
-    def _default_factory(self, api_key: Optional[str]) -> Any:  # pragma: no cover - requires dependency
+    def _default_factory(
+        self,
+        api_key: Optional[str],
+    ) -> Any:  # pragma: no cover - requires dependency
         if genai is None:
             raise AIModelError("google-genai library is not available")
         if not api_key:
             raise AIModelError("GOOGLE_API_KEY is not configured")
+
         return genai.Client(
             vertexai=True,
-    def _default_factory(self, api_key: str, project: str, location: str) -> Any:  # pragma: no cover - requires dependency
-        if genai is None:
-            raise AIModelError("google-genai library is not available")
-        if not project:
-            raise AIModelError("GOOGLE_CLOUD_PROJECT is not configured")
-        return genai.Client(
-            vertexai=True,
-            project=project,
-            location=location,
             api_key=api_key,
         )
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        message = str(exc)
+        return "429" in message or "503" in message or "UNAVAILABLE" in message
 
     def analyze(
         self,
@@ -72,8 +70,8 @@ class GeminiAIAdapter(AIModelPort):
             raise AIModelError("Audio source must provide either a path or content")
 
         client = self._client
-        
         max_retries = 5
+
         for attempt in range(max_retries):
             uploaded_name: Optional[str] = None
             try:
@@ -84,6 +82,7 @@ class GeminiAIAdapter(AIModelPort):
                         file=getattr(audio, "content"),
                         mime_type="audio/mpeg",
                     )
+
                 uploaded_name = getattr(uploaded, "name", None)
                 system_instruction = self._system_instruction(lang)
                 merged_prompt = f"[SYSTEM INSTRUCTION: {system_instruction}]\n\n{prompt}"
@@ -94,6 +93,7 @@ class GeminiAIAdapter(AIModelPort):
                 text = getattr(response, "text", None)
                 if not text:
                     raise AIModelError("Model returned no text")
+
                 return AnalysisResult(
                     text=text,
                     model=self._model,
@@ -101,21 +101,21 @@ class GeminiAIAdapter(AIModelPort):
                     metadata={"lang": lang.value, "tenant": (options or {}).get("tenant_id")},
                 )
             except Exception as exc:  # pragma: no cover - passthrough in tests via fakes
-                is_retryable = "429" in str(exc) or "503" in str(exc) or "UNAVAILABLE" in str(exc)
+                is_retryable = self._is_retryable_error(exc)
                 if is_retryable and attempt < max_retries - 1:
-                    # Exponential backoff: 2, 4, 8, 16 seconds
                     wait_time = 2 ** (attempt + 1)
                     logger.warning(
-                        f"Gemini API error (attempt {attempt + 1}/{max_retries}): {exc}. "
-                        f"Retrying in {wait_time}s..."
+                        "Gemini API error (attempt %s/%s): %s. Retrying in %ss...",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                        wait_time,
                     )
                     time.sleep(wait_time)
                     continue
-                # Log final failure
+
                 if is_retryable:
-                    logger.error(
-                        f"Gemini API failed after {max_retries} attempts: {exc}"
-                    )
+                    logger.error("Gemini API failed after %s attempts: %s", max_retries, exc)
                 raise AIModelError(f"Gemini call failed: {exc}") from exc
             finally:
                 if uploaded_name:

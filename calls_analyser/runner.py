@@ -129,9 +129,8 @@ def run_batch_process(
 
     # Prepare for batch
     api_key = deps.secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
-    project = deps.secrets_adapter.get_optional_secret("GOOGLE_CLOUD_PROJECT")
-    if not api_key or not project:
-        logger.error("Vertex config missing. Set GOOGLE_CLOUD_PROJECT and GOOGLE_API_KEY.")
+    if not api_key:
+        logger.error("Vertex config missing. Set GOOGLE_API_KEY.")
         return
 
     # Check if AI Registry populated
@@ -193,7 +192,7 @@ def run_batch_process(
 
     # Run batch
     logger.info(f"Starting Gemini Batch for {len(tasks)} items...")
-    runner = GeminiBatchRunner(api_key=api_key, model=deps.batch_model_key, project=project)
+    runner = GeminiBatchRunner(api_key=api_key, model=deps.batch_model_key)
     
     try:
         result_map = runner.run_batch(
