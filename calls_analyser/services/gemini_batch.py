@@ -35,6 +35,15 @@ class BatchTask:
 class GeminiBatchRunner:
     """Create and poll Gemini BATCH jobs for multiple audio files."""
 
+    def __init__(self, api_key: Optional[str], model: str) -> None:
+        if genai is None:
+            raise AIModelError("google-genai library is not available")
+        if not api_key:
+            raise AIModelError("GOOGLE_API_KEY is not configured")
+        self._api_key = api_key
+        self._model = model
+        self._client = genai.Client(
+            vertexai=True,
     def __init__(self, api_key: str, model: str, project: str, location: str = "global") -> None:
         if genai is None:
             raise AIModelError("google-genai library is not available")

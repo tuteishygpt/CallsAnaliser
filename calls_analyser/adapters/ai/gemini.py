@@ -28,8 +28,9 @@ class GeminiAIAdapter(AIModelPort):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str],
         model: str,
+        client_factory: Optional[Callable[[Optional[str]], Any]] = None,
         project: Optional[str] = None,
         location: Optional[str] = None,
         client_factory: Optional[Callable[[str, str, str], Any]] = None,
@@ -41,6 +42,13 @@ class GeminiAIAdapter(AIModelPort):
         self._client_factory = client_factory or self._default_factory
         self._client = self._client_factory(api_key, self._project, self._location)
 
+    def _default_factory(self, api_key: Optional[str]) -> Any:  # pragma: no cover - requires dependency
+        if genai is None:
+            raise AIModelError("google-genai library is not available")
+        if not api_key:
+            raise AIModelError("GOOGLE_API_KEY is not configured")
+        return genai.Client(
+            vertexai=True,
     def _default_factory(self, api_key: str, project: str, location: str) -> Any:  # pragma: no cover - requires dependency
         if genai is None:
             raise AIModelError("google-genai library is not available")
