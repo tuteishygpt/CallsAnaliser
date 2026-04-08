@@ -70,24 +70,24 @@ class GeminiBatchRunner:
             )
 
         self._api_key = api_key
-        self._model = model
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
         self._location = location
+
+        if self._project and self._location and api_key and not model.startswith("projects/"):
+            base_model = model.replace("models/", "")
+            self._model = f"projects/{self._project}/locations/{self._location}/publishers/google/models/{base_model}"
+        else:
+            self._model = model
 
         # Vertex AI only — no Developer API
         client_kwargs: dict[str, Any] = {
             "vertexai": True,
             "api_key": api_key,
         }
-        if self._project:
-            client_kwargs["project"] = self._project
-        if self._location:
-            client_kwargs["location"] = self._location
 
+        # google-genai throws ValueError if both api_key and project/location are provided
         logger.info(
-            "Creating Vertex AI client (project=%s, location=%s)",
-            self._project or "<env>",
-            self._location,
+            "Creating Vertex AI client (api_key provided, ignoring project/location for client init)"
         )
         self._client = genai.Client(**client_kwargs)
 
