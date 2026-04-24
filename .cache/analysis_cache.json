@@ -2726,5 +2726,22 @@
       "lang": "ru",
       "tenant": "Multicom"
     }
+  },
+  "[\"Multicom\", \"T8TEOKHL9C000035\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": true,\n  \"reason\": \"Клиент уточнил, что он может быть недоступен в назначенное время, и попросил отметить это в системе, что требует дополнительного внимания.\"\n}\n```",
+    "model": "models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "batch": true
+    }
+  },
+  "[\"Multicom\", \"T8G2TH53CS000036\", \"BATCH_PROMPT\", \"gemini\", \"models/gemini-2.5-flash-lite\", \"\"]": {
+    "text": "```json\n{\n  \"needs_follow_up\": false,\n  \"reason\": \"The call was resolved successfully, the client's order details were confirmed, and payment information was clarified.\"\n}\n```",
+    "model": "publishers/google/models/gemini-2.5-flash-lite",
+    "provider": "gemini",
+    "metadata": {
+      "lang": "ru",
+      "tenant": "Multicom"
+    }
   }
 }

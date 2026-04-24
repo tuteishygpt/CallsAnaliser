@@ -27,6 +27,14 @@ class UIHandlers:
     @staticmethod
     def _parse_follow_up_fields(text: str) -> tuple[str, str]:
         text_clean = str(text or "").strip()
+        # Strip markdown code fences that models sometimes wrap JSON in
+        if text_clean.startswith("```"):
+            lines = text_clean.splitlines()
+            if lines[-1].strip() == "```":
+                lines = lines[1:-1]
+            elif lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            text_clean = "\n".join(lines).strip()
         try:
             l, r = text_clean.find("{"), text_clean.rfind("}")
             if l != -1 and r != -1 and r > l:
@@ -36,7 +44,8 @@ class UIHandlers:
             needs_str = "Yes" if needs_follow_up else "No"
             reason = str(payload.get("reason") or "")
             return needs_str, reason
-        except Exception:
+        except Exception as exc:
+            print(f"DEBUG _parse_follow_up_fields failed: {exc}; text={text_clean!r:.300}")
             if "Needs follow-up:" in text_clean:
                 try:
                     parts = text_clean.split("Summary:", 1)
@@ -165,6 +174,7 @@ class UIHandlers:
                 row_data = self._build_row_base(entry)
                 
                 text_result = result_map.get(entry.unique_id)
+                print(f"DEBUG BATCH result for {entry.unique_id}: {text_result!r:.500}")
                 if text_result:
                     if text_result.startswith("Error:"):
                         self._fill_row_error(row_data, text_result)
@@ -507,31 +517,8 @@ class UIHandlers:
                 hidden_filter,
             )
 
-            if self._should_use_vertex_batch():
-                print("DEBUG: Using Vertex AI BATCH mode (batches.create API)")
-                try:
-                    rows, final_msg = self._run_gemini_batch_analysis(
-                        entries, tenant, prompt_override
-                    )
-                    final_df = pd.DataFrame(rows)
-                    yield (
-                        gr.update(value=final_df, visible=True),
-                        h2_success(final_msg),
-                        hidden_file,
-                        visible_filter,
-                    )
-                    return
-                except Exception as exc:
-                    yield (
-                        hidden_df_update,
-                        h2_error(f"❌ Gemini BATCH failed: {exc}"),
-                        hidden_file,
-                        hidden_filter,
-                    )
-                    return
-            else:
-                print(f"DEBUG: Sequential mode. batch_mode={self.deps.batch_params.batch_mode}, enable_gemini_batch={self.deps.batch_params.enable_gemini_batch}")
-                # Sequential processing (one by one)
+            # UI always uses sequential mode (one-by-one generate_content).
+            # Vertex Batch API is only used by runner.py / scheduler.
 
             rows = []
 
