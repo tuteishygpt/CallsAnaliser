@@ -4,14 +4,30 @@ Defaults to processing "yesterday's" calls.
 """
 import argparse
 import datetime
+import json
 import logging
+import os
 import sys
+import tempfile
 from typing import List, Optional
 from dotenv import load_dotenv
 
-# We need this to ensure we can run it as a standalone script if needed
-# but mostly it will be imported by app.py
 load_dotenv()
+
+# Bootstrap service-account credentials from env secret (HF Spaces / CI).
+if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if sa_json:
+        try:
+            json.loads(sa_json)
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="gcp_sa_",
+            )
+            tmp.write(sa_json)
+            tmp.close()
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
+        except (json.JSONDecodeError, OSError):
+            pass
 
 # Setup simple logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -20,7 +36,7 @@ logger = logging.getLogger("daily_batch")
 try:
     from calls_analyser.ui.dependencies import build_dependencies
     from calls_analyser.ui import utils
-    from calls_analyser.services.gemini_batch import GeminiBatchRunner, BatchTask, guess_mime_type
+    from calls_analyser.services.gemini_batch import VertexBatchRunner, BatchTask, guess_mime_type
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult
     # from calls_analyser.domain.exceptions import AIModelError
@@ -127,17 +143,7 @@ def run_batch_process(
 
     logger.info(f"Found {len(entries)} calls.")
 
-    # Prepare for batch
-    api_key = deps.secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
-    if not api_key:
-        logger.error("Vertex config missing. Set GOOGLE_API_KEY.")
-        return
-
-    # Check if AI Registry populated
-    # If using auto-language, we might need a default prompt key if not reusing `batch_model_key` properly
-    # Using `deps` properties
-    
-    # We need to construct the prompt. In app.py / deps, we have `batch_language`
+    # Build prompt
     lang_instruction = GeminiAIAdapter._system_instruction(deps.batch_language)
     prompt_text = deps.batch_prompt_text or ""
     merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
@@ -190,9 +196,9 @@ def run_batch_process(
         logger.info("Nothing to process. All done.")
         return
 
-    # Run batch
-    logger.info(f"Starting Gemini Batch for {len(tasks)} items...")
-    runner = GeminiBatchRunner(api_key=api_key, model=deps.batch_model_key)
+    # Run batch via Vertex AI Batch API
+    logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
+    runner = VertexBatchRunner(model=deps.batch_model_key)
     
     try:
         result_map = runner.run_batch(

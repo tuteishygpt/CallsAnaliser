@@ -16,7 +16,8 @@ class BatchParams:
 
     enable_gemini_batch: bool = True
     batch_size: int = 20
-    
+    batch_mode: str = "vertex_batch"  # "vertex_batch" or "sequential"
+
     # Scheduler settings
     scheduler_enabled: bool = False
     scheduler_mode: str = "cron"  # "cron" or "interval"
@@ -31,7 +32,10 @@ class BatchParams:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "BatchParams":
         enable = bool(payload.get("enable_gemini_batch", True))
-        
+        batch_mode = str(payload.get("batch_mode", "vertex_batch")).strip().lower()
+        if batch_mode not in ("vertex_batch", "sequential"):
+            batch_mode = "vertex_batch"
+
         # Batch size
         try:
             size_raw = int(payload.get("batch_size", cls.batch_size))  # type: ignore[arg-type]
@@ -58,8 +62,9 @@ class BatchParams:
         filter_call_type = filters.get("call_type")
 
         return cls(
-            enable_gemini_batch=enable, 
+            enable_gemini_batch=enable,
             batch_size=size,
+            batch_mode=batch_mode,
             
             scheduler_enabled=scheduler_enabled,
             scheduler_mode=scheduler_mode,

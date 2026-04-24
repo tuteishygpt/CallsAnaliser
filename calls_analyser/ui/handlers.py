@@ -14,7 +14,7 @@ from . import utils
 from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult
-from calls_analyser.services.gemini_batch import BatchTask, GeminiBatchRunner, guess_mime_type
+from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner, guess_mime_type
 
 
 class UIHandlers:
@@ -83,8 +83,10 @@ class UIHandlers:
         row_data["Link"] = ""
         row_data["Status"] = "❌"
 
-    def _should_use_gemini_batch(self) -> bool:
+    def _should_use_vertex_batch(self) -> bool:
         if not self.deps.batch_params.enable_gemini_batch:
+            return False
+        if self.deps.batch_params.batch_mode != "vertex_batch":
             return False
         if not self.deps.project_imports_available:
             return False
@@ -97,10 +99,6 @@ class UIHandlers:
         return getattr(provider, "provider_name", "") == "gemini"
 
     def _run_gemini_batch_analysis(self, entries, tenant, prompt_override):
-        api_key = self.deps.secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
-        if not api_key:
-            raise AIModelError("Vertex config is incomplete: set GOOGLE_API_KEY")
-
         prompt_text = prompt_override or self.deps.batch_prompt_text or ""
         lang_instruction = GeminiAIAdapter._system_instruction(self.deps.batch_language)
         merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
@@ -154,7 +152,7 @@ class UIHandlers:
 
         # Run batch only for missing tasks
         if tasks:
-            runner = GeminiBatchRunner(api_key=api_key, model=self.deps.batch_model_key)
+            runner = VertexBatchRunner(model=self.deps.batch_model_key)
             result_map = runner.run_batch(
                 tasks,
                 merged_prompt,
@@ -509,9 +507,8 @@ class UIHandlers:
                 hidden_filter,
             )
 
-            # FORCE NORMAL MODE AS REQUESTED: Skip Gemini Batch API, use local/sequential processing which checks cache/DB.
-            if False and self._should_use_gemini_batch():
-                print("DEBUG: Using Gemini BATCH mode (API)")
+            if self._should_use_vertex_batch():
+                print("DEBUG: Using Vertex AI BATCH mode (batches.create API)")
                 try:
                     rows, final_msg = self._run_gemini_batch_analysis(
                         entries, tenant, prompt_override
@@ -533,8 +530,8 @@ class UIHandlers:
                     )
                     return
             else:
-                print(f"DEBUG: Gemini Batch disabled. enable_gemini_batch={self.deps.batch_params.enable_gemini_batch}, available={self.deps.project_imports_available}, model={self.deps.batch_model_key}")
-                # Fallback to serial processing (one by one)
+                print(f"DEBUG: Sequential mode. batch_mode={self.deps.batch_params.batch_mode}, enable_gemini_batch={self.deps.batch_params.enable_gemini_batch}")
+                # Sequential processing (one by one)
 
             rows = []
 

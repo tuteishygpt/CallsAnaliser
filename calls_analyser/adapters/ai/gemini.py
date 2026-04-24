@@ -44,19 +44,22 @@ class GeminiAIAdapter(AIModelPort):
 
         self._api_key = api_key
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3")
-        self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+        self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
-        # When using API key for Vertex, we explicitly format the model string with project and location
-        if self._project and self._location and api_key and not model.startswith("projects/"):
+        has_adc = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+
+        if api_key and self._project and self._location and not model.startswith("projects/"):
             base_model = model.replace("models/", "")
             self._model = f"projects/{self._project}/locations/{self._location}/publishers/google/models/{base_model}"
+        elif not api_key and not model.startswith("publishers/"):
+            base_model = model.replace("models/", "")
+            self._model = f"publishers/google/models/{base_model}"
         else:
             self._model = model
 
-        if not self._api_key:
+        if not self._api_key and not has_adc:
             raise AIModelError(
-                "GOOGLE_API_KEY is not configured. "
-                "Vertex AI requires a valid API key."
+                "Neither GOOGLE_API_KEY nor GOOGLE_APPLICATION_CREDENTIALS is configured."
             )
 
         self._client_factory = client_factory or self._default_factory
@@ -68,20 +71,22 @@ class GeminiAIAdapter(AIModelPort):
     ) -> Any:  # pragma: no cover - requires dependency
         """Create a genai.Client in Vertex AI mode.
 
-        Raises ``AIModelError`` if the library or key is missing.
+        Uses ``api_key`` when available, otherwise falls back to ADC
+        (service account via ``GOOGLE_APPLICATION_CREDENTIALS``).
         """
-        kwargs: dict[str, Any] = {
-            "vertexai": True,
-            "api_key": api_key,
-        }
+        if api_key:
+            logger.info("Creating Vertex AI client with api_key")
+            return genai.Client(vertexai=True, api_key=api_key)
 
-        # google-genai throws ValueError if both api_key and project/location are provided
-        # Therefore, when using an API key, we must rely on the key itself or the model_id string
-        # to route the request appropriately.
         logger.info(
-            "Creating Vertex AI client (api_key provided, ignoring project/location for client init)"
+            "Creating Vertex AI client with ADC (project=%s, location=%s)",
+            self._project, self._location,
         )
-        return genai.Client(**kwargs)
+        return genai.Client(
+            vertexai=True,
+            project=self._project,
+            location=self._location,
+        )
 
     @staticmethod
     def _is_retryable_error(exc: Exception) -> bool:

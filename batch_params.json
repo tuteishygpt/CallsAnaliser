@@ -1,6 +1,7 @@
 {
   "enable_gemini_batch": true,
   "batch_size": 25,
+  "batch_mode": "vertex_batch",
   "scheduler": {
     "enabled": true,
     "mode": "cron",

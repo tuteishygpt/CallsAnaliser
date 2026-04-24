@@ -1,14 +1,23 @@
-"""Helpers for running Gemini BATCH processing via Vertex AI.
+"""Helpers for running Gemini processing via Vertex AI.
 
-Processes audio files sequentially using ``types.Part.from_bytes`` and
-``client.models.generate_content`` — no GCS or Batch API required.
+**VertexBatchRunner** — true Vertex AI Batch API via GCS:
+1. Upload audio files to a GCS bucket.
+2. Write a JSONL request file referencing ``gs://`` URIs.
+3. Submit ``batches.create`` with ``gcs_uri`` source/destination.
+4. Poll until the job reaches a terminal state.
+5. Download and parse the JSONL output from GCS.
+
+The legacy ``GeminiBatchRunner`` (sequential one-by-one calls) is
+commented out below but retained for reference.
 """
 from __future__ import annotations
 
+import json
 import logging
 import mimetypes
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -19,12 +28,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Optional dependency wiring
 # ---------------------------------------------------------------------------
-try:  # pragma: no cover - optional dependency wiring
+try:  # pragma: no cover
     from google import genai
     from google.genai import types
-except Exception:  # pragma: no cover - optional dependency wiring
+except Exception:  # pragma: no cover
     genai = None  # type: ignore
     types = None  # type: ignore
+
+try:  # pragma: no cover
+    from google.cloud import storage as gcs_storage
+except Exception:  # pragma: no cover
+    gcs_storage = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -40,56 +54,93 @@ class BatchTask:
 
 
 # ---------------------------------------------------------------------------
-# Batch runner  (sequential, inline bytes, Vertex AI only)
+# Legacy GeminiBatchRunner (sequential, one-by-one generate_content calls).
+# Commented out — replaced by VertexBatchRunner which uses the real Batch API.
 # ---------------------------------------------------------------------------
-class GeminiBatchRunner:
-    """Process multiple audio files via Vertex AI.
+#
+# class GeminiBatchRunner:
+#     ...  (see git history for full implementation)
 
-    Each file is sent inline as ``types.Part.from_bytes`` — exactly the
-    same approach as a single-file call.  No GCS bucket or Batch API is
-    needed.
 
-    Required environment / params:
-    * ``GOOGLE_API_KEY`` – Vertex AI API key (or pass *api_key*).
-    * ``GOOGLE_CLOUD_PROJECT`` – GCP project id (optional, read from env).
+# ---------------------------------------------------------------------------
+# Vertex AI Batch runner (GCS-based batches.create API) — default
+# ---------------------------------------------------------------------------
+
+_TERMINAL_STATES = frozenset({
+    "JOB_STATE_SUCCEEDED",
+    "JOB_STATE_FAILED",
+    "JOB_STATE_CANCELLED",
+    "JOB_STATE_PARTIALLY_SUCCEEDED",
+})
+
+
+class VertexBatchRunner:
+    """Submit audio analysis as a Vertex AI *batch* job via GCS.
+
+    Required:
+    * ``GOOGLE_APPLICATION_CREDENTIALS`` — path to service-account JSON
+      (or ``GOOGLE_SERVICE_ACCOUNT_JSON`` env var with raw JSON content,
+      which ``app.py`` / ``runner.py`` write to a temp file on startup).
+    * ``GCS_BATCH_BUCKET`` — GCS bucket name for staging audio and JSONL.
+    * ``GOOGLE_CLOUD_PROJECT`` — GCP project id.
+
+    Workflow:
+    1. Upload audio files to ``gs://{bucket}/batch_{job_id}/audio/``.
+    2. Build JSONL with one ``generateContent`` request per line,
+       each referencing the ``gs://`` URI of its audio file.
+    3. Upload JSONL to ``gs://{bucket}/batch_{job_id}/input.jsonl``.
+    4. Call ``client.batches.create(src=gcs_input_uri, dest=gcs_output_prefix)``.
+    5. Poll ``client.batches.get`` until terminal state.
+    6. Download output JSONL from GCS, parse responses.
+    7. Clean up GCS staging prefix.
     """
 
     def __init__(
         self,
-        api_key: Optional[str],
         model: str,
         project: Optional[str] = None,
-        location: str = "global",
+        location: str = "us-central1",
+        bucket: Optional[str] = None,
+        poll_interval: float = 30.0,
+        poll_timeout: float = 3600.0,
     ) -> None:
         if genai is None:
             raise AIModelError("google-genai library is not available")
-        if not api_key:
+        if gcs_storage is None:
             raise AIModelError(
-                "GOOGLE_API_KEY is not configured. "
-                "Vertex AI requires a valid API key."
+                "google-cloud-storage is not installed. "
+                "Run: pip install google-cloud-storage"
             )
 
-        self._api_key = api_key
-        self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-        self._location = location
+        self._project = project or os.environ.get(
+            "GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3",
+        )
+        self._location = location or os.environ.get(
+            "GOOGLE_CLOUD_LOCATION", "us-central1",
+        )
+        self._bucket_name = bucket or os.environ.get("GCS_BATCH_BUCKET", "")
+        if not self._bucket_name:
+            raise AIModelError(
+                "GCS_BATCH_BUCKET is not configured. "
+                "Set it to an existing GCS bucket name."
+            )
 
-        if self._project and self._location and api_key and not model.startswith("projects/"):
-            base_model = model.replace("models/", "")
-            self._model = f"projects/{self._project}/locations/{self._location}/publishers/google/models/{base_model}"
+        self._poll_interval = poll_interval
+        self._poll_timeout = poll_timeout
+
+        if not model.startswith("publishers/"):
+            base_model = model.replace("models/", "").replace("publishers/google/models/", "")
+            self._model = f"publishers/google/models/{base_model}"
         else:
             self._model = model
 
-        # Vertex AI only — no Developer API
-        client_kwargs: dict[str, Any] = {
-            "vertexai": True,
-            "api_key": api_key,
-        }
-
-        # google-genai throws ValueError if both api_key and project/location are provided
-        logger.info(
-            "Creating Vertex AI client (api_key provided, ignoring project/location for client init)"
+        self._client = genai.Client(
+            vertexai=True,
+            project=self._project,
+            location=self._location,
         )
-        self._client = genai.Client(**client_kwargs)
+        self._gcs = gcs_storage.Client(project=self._project)
+        self._gcs_bucket = self._gcs.bucket(self._bucket_name)
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -99,94 +150,240 @@ class GeminiBatchRunner:
         tasks: Iterable[BatchTask],
         prompt_text: str,
         *,
-        chunk_size: int = 20,
-        max_retries: int = 5,
+        chunk_size: int = 25,
     ) -> Dict[str, str]:
-        """Process *tasks* sequentially and return ``{key: text}``.
-
-        *chunk_size* is accepted for API compatibility but is not used —
-        all files are processed one-by-one via inline bytes.
-        """
+        """Upload to GCS, submit batch job(s), poll, return results."""
         pending = list(tasks)
         if not pending:
             return {}
 
-        results: Dict[str, str] = {}
+        all_results: Dict[str, str] = {}
 
-        for i, task in enumerate(pending, start=1):
+        for chunk_start in range(0, len(pending), chunk_size):
+            chunk = pending[chunk_start : chunk_start + chunk_size]
+            chunk_num = chunk_start // chunk_size + 1
+            total_chunks = (len(pending) + chunk_size - 1) // chunk_size
             logger.info(
-                "Processing %d/%d: %s", i, len(pending), task.key,
+                "Batch chunk %d/%d (%d tasks)", chunk_num, total_chunks, len(chunk),
             )
-            text = self._process_single(task, prompt_text, max_retries)
-            if text is not None:
-                results[task.key] = text
+            chunk_results = self._run_single_batch(chunk, prompt_text)
+            all_results.update(chunk_results)
+
+        return all_results
+
+    # ------------------------------------------------------------------ #
+    # Internal: single batch job lifecycle
+    # ------------------------------------------------------------------ #
+    def _run_single_batch(
+        self,
+        tasks: List[BatchTask],
+        prompt_text: str,
+    ) -> Dict[str, str]:
+        job_id = uuid.uuid4().hex[:12]
+        gcs_prefix = f"batch_{job_id}"
+
+        audio_uris = self._upload_audio_to_gcs(tasks, gcs_prefix)
+        input_uri = self._write_jsonl_to_gcs(tasks, audio_uris, prompt_text, gcs_prefix)
+        output_prefix = f"gs://{self._bucket_name}/{gcs_prefix}/output/"
+
+        logger.info("Submitting batch job (input=%s, output=%s)…", input_uri, output_prefix)
+        job = self._client.batches.create(
+            model=self._model,
+            src=input_uri,
+            config=types.CreateBatchJobConfig(
+                dest=output_prefix,
+                display_name=f"calls-analyser-{job_id}",
+            ),
+        )
+        job_name = job.name
+        logger.info("Batch job created: %s", job_name)
+
+        job = self._poll_until_done(job_name)
+
+        results = self._read_output_jsonl(tasks, gcs_prefix)
+
+        self._cleanup_gcs(gcs_prefix)
 
         return results
 
     # ------------------------------------------------------------------ #
-    # Single-file processing (with retries)
+    # Step 1: upload audio files to GCS
     # ------------------------------------------------------------------ #
-    def _process_single(
+    def _upload_audio_to_gcs(
         self,
-        task: BatchTask,
+        tasks: List[BatchTask],
+        gcs_prefix: str,
+    ) -> Dict[str, str]:
+        """Upload local audio → GCS. Returns {task_key: gs://uri}."""
+        uris: Dict[str, str] = {}
+        for i, task in enumerate(tasks, start=1):
+            ext = os.path.splitext(task.path)[1] or ".bin"
+            blob_name = f"{gcs_prefix}/audio/{task.key}{ext}"
+            logger.info("Uploading %d/%d to GCS: %s", i, len(tasks), blob_name)
+            blob = self._gcs_bucket.blob(blob_name)
+            blob.upload_from_filename(task.path, content_type=task.mime_type)
+            uris[task.key] = f"gs://{self._bucket_name}/{blob_name}"
+        return uris
+
+    # ------------------------------------------------------------------ #
+    # Step 2: write JSONL request file to GCS
+    # ------------------------------------------------------------------ #
+    def _write_jsonl_to_gcs(
+        self,
+        tasks: List[BatchTask],
+        audio_uris: Dict[str, str],
         prompt_text: str,
-        max_retries: int,
-    ) -> Optional[str]:
-        """Send one audio file to Gemini and return the response text."""
-        for attempt in range(max_retries):
-            try:
-                with open(task.path, "rb") as f:
-                    audio_bytes = f.read()
+        gcs_prefix: str,
+    ) -> str:
+        """Build JSONL and upload to GCS. Returns gs:// URI of the JSONL."""
+        clean_prompt = (prompt_text or "").strip()
+        lines: list[str] = []
 
-                audio_part = types.Part.from_bytes(
-                    data=audio_bytes,
-                    mime_type=task.mime_type or "audio/wav",
+        for task in tasks:
+            gcs_uri = audio_uris.get(task.key)
+            if not gcs_uri:
+                continue
+
+            audio_part = {
+                "fileData": {
+                    "mimeType": task.mime_type or "audio/wav",
+                    "fileUri": gcs_uri,
+                }
+            }
+
+            parts = [audio_part]
+            if clean_prompt:
+                parts.append({"text": clean_prompt})
+
+            row = {
+                "request": {
+                    "contents": [{"role": "user", "parts": parts}],
+                },
+            }
+
+            lines.append(json.dumps(row, ensure_ascii=False))
+
+        jsonl_content = "\n".join(lines)
+        blob_name = f"{gcs_prefix}/input.jsonl"
+        blob = self._gcs_bucket.blob(blob_name)
+        blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+        input_uri = f"gs://{self._bucket_name}/{blob_name}"
+        logger.info("Wrote %d requests to %s", len(lines), input_uri)
+        return input_uri
+
+    # ------------------------------------------------------------------ #
+    # Step 3: poll until terminal state
+    # ------------------------------------------------------------------ #
+    def _poll_until_done(self, job_name: str) -> Any:
+        start = time.monotonic()
+
+        while True:
+            job = self._client.batches.get(name=job_name)
+            state = getattr(job.state, "value", str(job.state)) if job.state else "UNKNOWN"
+            elapsed = time.monotonic() - start
+
+            stats = getattr(job, "completion_stats", None)
+            stats_str = ""
+            if stats:
+                stats_str = (
+                    f" (ok={getattr(stats, 'successful_count', '?')}"
+                    f" fail={getattr(stats, 'failed_count', '?')})"
                 )
 
-                clean_prompt = (prompt_text or "").strip()
-                contents: list[Any] = [audio_part]
-                if clean_prompt:
-                    contents.append(clean_prompt)
+            logger.info(
+                "Batch %s — state: %s (%.0fs)%s",
+                job_name, state, elapsed, stats_str,
+            )
 
-                response = self._client.models.generate_content(
-                    model=self._model,
-                    contents=contents,
+            if state in _TERMINAL_STATES:
+                if state == "JOB_STATE_FAILED":
+                    error = getattr(job, "error", None)
+                    raise AIModelError(f"Batch job failed: {error}")
+                return job
+
+            if elapsed >= self._poll_timeout:
+                raise AIModelError(
+                    f"Batch job {job_name} timed out after {self._poll_timeout}s"
                 )
 
-                text = getattr(response, "text", None)
-                if text:
-                    return text
+            time.sleep(self._poll_interval)
 
-                logger.warning(
-                    "Empty response for %s (attempt %d/%d)",
-                    task.key, attempt + 1, max_retries,
-                )
-                return None
+    # ------------------------------------------------------------------ #
+    # Step 4: read output JSONL from GCS
+    # ------------------------------------------------------------------ #
+    def _read_output_jsonl(
+        self,
+        tasks: List[BatchTask],
+        gcs_prefix: str,
+    ) -> Dict[str, str]:
+        results: Dict[str, str] = {}
 
-            except Exception as exc:
-                if self._is_retryable(exc) and attempt < max_retries - 1:
-                    wait_time = 2 ** (attempt + 1)
-                    logger.warning(
-                        "Retryable error for %s (attempt %d/%d): %s. "
-                        "Waiting %ds…",
-                        task.key, attempt + 1, max_retries, exc, wait_time,
-                    )
-                    time.sleep(wait_time)
+        output_prefix = f"{gcs_prefix}/output/"
+        blobs = list(self._gcs_bucket.list_blobs(prefix=output_prefix))
+        jsonl_blobs = [b for b in blobs if b.name.endswith(".jsonl")]
+
+        if not jsonl_blobs:
+            logger.warning("No output JSONL files found under %s", output_prefix)
+            for task in tasks:
+                results[task.key] = "Error: no output file"
+            return results
+
+        output_rows: list[dict] = []
+        for blob in jsonl_blobs:
+            content = blob.download_as_text(encoding="utf-8")
+            for line in content.strip().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    output_rows.append(json.loads(line))
+                except json.JSONDecodeError:
                     continue
 
-                error_msg = f"Error: {exc}"
-                logger.error(
-                    "Failed %s after %d attempt(s): %s",
-                    task.key, attempt + 1, exc,
-                )
-                return error_msg
+        for idx, row in enumerate(output_rows):
+            task_key = tasks[idx].key if idx < len(tasks) else ""
 
-        return None
+            response = row.get("response", {})
+            error = row.get("error")
+            if error:
+                if task_key:
+                    results[task_key] = f"Error: {error}"
+                continue
+
+            text = self._extract_text_from_response(response)
+            if task_key:
+                results[task_key] = text or "Error: no text in response"
+
+        for task in tasks:
+            if task.key not in results:
+                results[task.key] = "Error: no response received"
+
+        logger.info("Parsed %d results from output JSONL", len(results))
+        return results
 
     @staticmethod
-    def _is_retryable(exc: Exception) -> bool:
-        msg = str(exc)
-        return "429" in msg or "503" in msg or "UNAVAILABLE" in msg
+    def _extract_text_from_response(response: dict) -> str:
+        candidates = response.get("candidates", [])
+        for candidate in candidates:
+            content = candidate.get("content", {})
+            parts = content.get("parts", [])
+            for part in parts:
+                text = part.get("text")
+                if text:
+                    return text
+        return ""
+
+    # ------------------------------------------------------------------ #
+    # Cleanup: delete GCS staging prefix
+    # ------------------------------------------------------------------ #
+    def _cleanup_gcs(self, gcs_prefix: str) -> None:
+        """Best-effort deletion of all blobs under the batch prefix."""
+        try:
+            blobs = list(self._gcs_bucket.list_blobs(prefix=f"{gcs_prefix}/"))
+            for blob in blobs:
+                blob.delete()
+            logger.info("Cleaned up %d GCS objects under %s/", len(blobs), gcs_prefix)
+        except Exception as exc:
+            logger.warning("GCS cleanup failed for %s: %s", gcs_prefix, exc)
 
 
 # ---------------------------------------------------------------------------
