@@ -56,7 +56,7 @@ pip install -e ".[dev]"
 
 ## Configuration
 
-- `.env` — Secrets and tenant config (git-ignored). Required keys: `GOOGLE_API_KEY`, tenant-specific vars (`<TENANT>_TELEPHONY_PROVIDER`, `<TENANT>_MTS_DOMAIN`, `<TENANT>_MTS_API_KEY` for MTS VATS, or `<TENANT>_VOCHI_API_KEY` for VoChi API v1).
+- `.env` — Secrets and tenant config (git-ignored). Required keys: `GOOGLE_API_KEY`, tenant-specific vars (`<TENANT>_TELEPHONY_PROVIDER`, `<TENANT>_MTS_DOMAIN`, `<TENANT>_MTS_API_KEY` for MTS VATS, or `<TENANT>_VOCHI_CLIENT_ID`/`<TENANT>_VOCHI_BEARER` for Vochi).
 - `batch_params.json` — Batch processing and scheduler settings (`enable_gemini_batch`, `batch_size`, scheduler cron/interval config, filters).
 - Optional: `SUPABASE_URL` + `SUPABASE_KEY` env vars enable Supabase cache; without them, `FileBackedCache` is used.
 
