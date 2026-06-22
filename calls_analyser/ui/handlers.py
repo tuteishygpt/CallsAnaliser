@@ -76,10 +76,10 @@ class UIHandlers:
             # выкарыстоўваем яго; інакш падаем на recording_url().
             link = record_url or tenant.recording_url(entry.unique_id)
         else:
-            link = (
-                f"{tenant.vochi_base_url.rstrip('/')}/calllogs/"
-                f"{tenant.vochi_client_id}/{entry.unique_id}"
-            )
+            raw = getattr(entry, "raw", {}) or {}
+            link = str(raw.get("recording_url") or "").strip()
+            if not link:
+                link = tenant.recording_url(entry.unique_id)
         row_data["Needs follow-up"] = needs
         row_data["Reason"] = reason
         row_data["Link"] = f'<a href="{link}" target="_blank">Listen</a>' if link else ""

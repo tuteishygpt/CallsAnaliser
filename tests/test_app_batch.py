@@ -9,9 +9,8 @@ import pandas as pd
 import pytest
 
 os.environ.setdefault("DEFAULT_TENANT_ID", "tenant")
-os.environ.setdefault("TENANT_VOCHI_CLIENT_ID", "client")
-os.environ.setdefault("TENANT_VOCHI_BASE_URL", "https://crm.example/api")
-os.environ.setdefault("TENANT_VOCHI_BEARER", "")
+os.environ.setdefault("TENANT_VOCHI_API_KEY", "test-vochi-key")
+os.environ.setdefault("TENANT_VOCHI_BASE_URL", "https://bot.example/api/v1")
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 
 import app
@@ -54,8 +53,9 @@ def _configure_batch_environment(
 ) -> tuple[SimpleNamespace, _StubAnalysisService | None]:
     tenant = SimpleNamespace(
         tenant_id="tenant",
-        vochi_base_url="https://crm.example/api",
-        vochi_client_id="client",
+        provider="vochi",
+        vochi_base_url="https://bot.example/api/v1",
+        recording_url=lambda unique_id: f"https://bot.example/api/v1/recording/{unique_id}",
     )
 
     monkeypatch.setattr(app, "PROJECT_IMPORTS_AVAILABLE", True)
@@ -109,6 +109,7 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
             destination="Support",
             duration_seconds=123,
             unique_id="call-1",
+            raw={"recording_url": "https://bot.example/permanent/call-1"},
         ),
         SimpleNamespace(
             started_at=dt.datetime(2024, 2, 15, 10, 0),
@@ -116,6 +117,7 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
             destination="Sales",
             duration_seconds=45,
             unique_id="call-2",
+            raw={},
         ),
     ]
     responses = {
@@ -143,7 +145,7 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     assert list(partial_df["Needs follow-up"]) == ["Yes"]
     assert list(partial_df["Reason"]) == ["Schedule callback"]
     assert partial_df.iloc[0]["Link"] == (
-        "<a href=\"https://crm.example/api/calllogs/client/call-1\" target=\"_blank\">Listen</a>"
+        "<a href=\"https://bot.example/permanent/call-1\" target=\"_blank\">Listen</a>"
     )
 
     error_df_update, error_message, _, error_filter = result[2]

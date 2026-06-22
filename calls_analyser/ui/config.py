@@ -57,7 +57,7 @@ CALL_TYPE_OPTIONS = [
 MODEL_CANDIDATES = CFG_MODEL_CANDIDATES if PROJECT_IMPORTS_AVAILABLE else []
 
 DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "Amedis")
-DEFAULT_BASE_URL = os.environ.get("VOCHI_BASE_URL", "https://crm.vochi.by/api")
+DEFAULT_BASE_URL = os.environ.get("VOCHI_BASE_URL", "https://bot.vochi.by/api/v1")
 
 BATCH_PROMPT_KEY = CFG_BATCH_PROMPT_KEY
 BATCH_PROMPT_TEXT = (CFG_BATCH_PROMPT_TEXT or "").strip()

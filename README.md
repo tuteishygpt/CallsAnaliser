@@ -32,6 +32,16 @@ To enable Gemini BATCH processing for mass analysis, adjust `batch_params.json` 
 
 By default the app uses **Vochi** provider (`TELEPHONY_PROVIDER=vochi`).
 
+For a tenant on **VoChi API v1**, set:
+
+- `<TENANT>_TELEPHONY_PROVIDER=vochi`
+- `<TENANT>_VOCHI_API_KEY=...`
+- `<TENANT>_VOCHI_BASE_URL=https://bot.vochi.by/api/v1` (optional)
+
+The VoChi call list contains unsuccessful incoming and outgoing calls from
+`/unsuccessful-calls`. Recordings are resolved through `/recording` and then
+downloaded from the temporary S3 URL returned by the API.
+
 For a new tenant on **MTS VATS**, set tenant-scoped environment variables:
 
 - `<TENANT>_TELEPHONY_PROVIDER=mts_vats`

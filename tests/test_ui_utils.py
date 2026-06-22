@@ -6,6 +6,8 @@ import datetime as _dt
 
 import pytest
 
+from calls_analyser.ui.utils import label_row
+
 
 def _parse_day(day_value) -> _dt.date:
     if isinstance(day_value, _dt.datetime):
@@ -150,3 +152,18 @@ class TestParseTimeValue:
         """Test parsing invalid time values."""
         with pytest.raises(ValueError, match="Няправільны фармат часу"):
             _parse_time_value("invalid")
+
+
+def test_label_row_supports_vochi_api_v1_fields() -> None:
+    label = label_row(
+        {
+            "start_time": "2026-04-22T10:00:00+03:00",
+            "phone_number": "+375290000000",
+            "participants": [{"extension": "150"}, {"extension": "151"}],
+            "duration_seconds": 42,
+        }
+    )
+
+    assert label.startswith("2026-04-22T10:00:00+03:00 | +375290000000")
+    assert "150, 151" in label
+    assert label.endswith("(42s)")

@@ -124,8 +124,7 @@ def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any)
     else:
         telephony_adapter = VochiTelephonyAdapter(
             base_url=config_obj.vochi_base_url,
-            client_id=config_obj.vochi_client_id,
-            bearer_token=config_obj.bearer_token,
+            api_key=config_obj.vochi_api_key or "",
         )
     return CallLogService(telephony_adapter, storage_adapter)
 

@@ -36,7 +36,7 @@ def test_ensure_recording_caches_download(tmp_path: Path) -> None:
     storage = LocalStorageAdapter(tmp_path)
     telephony = FakeTelephony()
     service = CallLogService(telephony, storage)
-    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
 
     handle1 = service.ensure_recording("abc", tenant)
     assert telephony.recording_calls == 1
@@ -46,14 +46,14 @@ def test_ensure_recording_caches_download(tmp_path: Path) -> None:
     handle2 = service.ensure_recording("abc", tenant)
     assert telephony.recording_calls == 1
     assert handle2.local_uri == handle1.local_uri
-    assert handle2.source_uri == "https://api/calllogs/client/abc"
+    assert handle2.source_uri == "https://api/recording/abc"
 
 
 def test_list_calls_returns_entries(tmp_path: Path) -> None:
     storage = LocalStorageAdapter(tmp_path)
     telephony = FakeTelephony()
     service = CallLogService(telephony, storage)
-    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
 
     calls = service.list_calls(date(2024, 6, 1), tenant, time_from=time(8, 0), time_to=time(12, 0), call_type=0)
     assert len(calls) == 1

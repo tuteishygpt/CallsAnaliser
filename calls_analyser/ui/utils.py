@@ -11,10 +11,20 @@ from .config import CALL_TYPE_OPTIONS
 
 
 def label_row(row: dict) -> str:
-    start = row.get("Start", "")
-    src = row.get("CallerId", "")
-    dst = row.get("Destination", "")
-    dur = row.get("Duration", "")
+    start = row.get("Start") or row.get("start_time") or ""
+    src = row.get("CallerId") or row.get("phone_number") or ""
+    dst = row.get("Destination") or ""
+    if not dst:
+        participants = row.get("participants")
+        if isinstance(participants, list):
+            dst = ", ".join(
+                str(item.get("extension")).strip()
+                for item in participants
+                if isinstance(item, dict) and str(item.get("extension") or "").strip()
+            )
+    dur = row.get("Duration")
+    if dur in (None, ""):
+        dur = row.get("duration_seconds", "")
     return f"{start} | {src} → {dst} ({dur}s)"
 
 

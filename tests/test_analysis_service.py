@@ -43,7 +43,7 @@ def test_analysis_service_is_idempotent() -> None:
     prompt_service = PromptService(PROMPTS)
     call_log_service = StubCallLogService()
     service = AnalysisService(call_log_service, registry, prompt_service)
-    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
 
     options = AnalysisOptions(model_key="fake-model", prompt_key="simple", custom_prompt="custom")
     result1 = service.analyze_call("abc", tenant, Language.ENGLISH, options)
@@ -64,7 +64,7 @@ def test_analysis_service_accepts_external_cache() -> None:
     call_log_service = StubCallLogService()
     cache: dict[CacheKey, AnalysisResult] = {}
     service = AnalysisService(call_log_service, registry, prompt_service, cache=cache)
-    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api", vochi_client_id="client")
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
 
     options = AnalysisOptions(model_key="fake-model", prompt_key="simple", custom_prompt="custom ")
     service.analyze_call("abc", tenant, Language.BELARUSIAN, options)

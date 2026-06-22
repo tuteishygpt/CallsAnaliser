@@ -1,8 +1,8 @@
-"""Vochi telephony adapter."""
+"""Vochi API v1 telephony adapter."""
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, Optional
 
 import requests
 
@@ -22,25 +22,52 @@ class _HTTPClient:
 
 
 class VochiTelephonyAdapter(TelephonyPort):
-    """Telephony adapter for Vochi CRM."""
+    """Telephony adapter for the VoChi bot API."""
+
+    _PAGE_SIZE = 100
 
     def __init__(
         self,
         base_url: str,
-        client_id: str,
-        bearer_token: Optional[str] = None,
+        api_key: str,
         http_client: Optional[requests.Session] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client_id = client_id
-        self._bearer = bearer_token
+        self._api_key = api_key
         self._http = _HTTPClient(http_client)
 
-    def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "audio/*,application/json"}
-        if self._bearer:
-            headers["Authorization"] = f"Bearer {self._bearer}"
-        return headers
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        return {"Accept": "application/json"}
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> Optional[datetime]:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_duration(value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _participant_extensions(value: Any) -> Optional[str]:
+        if not isinstance(value, list):
+            return None
+        extensions = [
+            str(item.get("extension")).strip()
+            for item in value
+            if isinstance(item, dict) and str(item.get("extension") or "").strip()
+        ]
+        return ", ".join(extensions) or None
 
     def list_calls(
         self,
@@ -50,62 +77,124 @@ class VochiTelephonyAdapter(TelephonyPort):
         time_to: Optional[time] = None,
         call_type: Optional[int] = None,
     ) -> Iterable[CallLogEntry]:
-        url = f"{self._base_url}/calllogs"
-        start_value = self._format_datetime(day, time_from or time.min)
-        end_value = self._format_datetime(day, time_to or time.max.replace(microsecond=0))
-        # Include multiple common variants of parameter names to be robust to API expectations.
-        # Keep original lowercase keys for backward compatibility and tests.
-        params: dict[str, str | int] = {
-            "start": start_value,
-            "Start": start_value,
-            "end": end_value,
-            "End": end_value,
-            "clientId": self._client_id,
-            "clientid": self._client_id,
-        }
-        if call_type is not None:
-            params["calltype"] = call_type
-            params["callType"] = call_type
-            params["Calltype"] = call_type
-        try:
-            response = self._http.get(url, params=params, headers=self._headers(), timeout=60)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise TelephonyError(f"Failed to fetch call logs: {exc}") from exc
+        del tenant_id, time_from, time_to
 
-        payload = response.json()
-        data = payload.get("data", payload) if isinstance(payload, dict) else payload
-        entries: List[CallLogEntry] = []
-        for item in data:
-            unique_id = str(item.get("UniqueId"))
-            start_raw = item.get("Start")
-            started_at = None
-            if isinstance(start_raw, str):
-                try:
-                    started_at = datetime.fromisoformat(start_raw)
-                except ValueError:
-                    started_at = None
-            entry = CallLogEntry(
-                unique_id=unique_id,
-                started_at=started_at,
-                caller_id=item.get("CallerId"),
-                destination=item.get("Destination"),
-                duration_seconds=int(item["Duration"]) if str(item.get("Duration", "")).isdigit() else None,
-                raw=dict(item),
-            )
-            entries.append(entry)
+        direction_by_type = {None: "all", 0: "incoming", 1: "outgoing"}
+        if call_type == 2:
+            return []
+        direction = direction_by_type.get(call_type, "all")
+        url = f"{self._base_url}/unsuccessful-calls"
+        offset = 0
+        entries: list[CallLogEntry] = []
+
+        while True:
+            params: dict[str, str | int] = {
+                "key": self._api_key,
+                "date_from": day.isoformat(),
+                "date_to": day.isoformat(),
+                "direction": direction,
+                "limit": self._PAGE_SIZE,
+                "offset": offset,
+            }
+            try:
+                response = self._http.get(
+                    url,
+                    params=params,
+                    headers=self._headers(),
+                    timeout=60,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (requests.RequestException, ValueError) as exc:
+                raise TelephonyError("Failed to fetch VoChi unsuccessful calls") from exc
+
+            if not isinstance(payload, dict) or not isinstance(payload.get("calls"), list):
+                raise TelephonyError("VoChi returned an invalid calls payload")
+
+            calls = payload["calls"]
+            for item in calls:
+                if not isinstance(item, dict):
+                    continue
+                unique_id = str(item.get("unique_id") or "").strip()
+                if not unique_id:
+                    continue
+                entries.append(
+                    CallLogEntry(
+                        unique_id=unique_id,
+                        started_at=self._parse_datetime(item.get("start_time")),
+                        caller_id=(
+                            str(item["phone_number"])
+                            if item.get("phone_number") is not None
+                            else None
+                        ),
+                        destination=self._participant_extensions(item.get("participants")),
+                        duration_seconds=self._parse_duration(item.get("duration_seconds")),
+                        raw=dict(item),
+                    )
+                )
+
+            total = self._parse_duration(payload.get("total"))
+            page_count = len(calls)
+            if (
+                page_count == 0
+                or page_count < self._PAGE_SIZE
+                or (total is not None and offset + page_count >= total)
+            ):
+                break
+            offset += page_count
+
         return entries
 
-    @staticmethod
-    def _format_datetime(day: date, time_value: time) -> str:
-        dt = datetime.combine(day, time_value)
-        return dt.replace(microsecond=0).isoformat()
-
     def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
-        url = f"{self._base_url}/calllogs/{self._client_id}/{unique_id}"
+        del tenant_id
+
+        metadata_url = f"{self._base_url}/recording"
         try:
-            response = self._http.get(url, headers=self._headers(), timeout=120)
-            response.raise_for_status()
+            metadata_response = self._http.get(
+                metadata_url,
+                params={"unique_id": unique_id, "key": self._api_key},
+                headers=self._headers(),
+                timeout=60,
+            )
+            metadata_response.raise_for_status()
+            metadata = metadata_response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise TelephonyError(
+                f"Failed to fetch VoChi recording metadata for {unique_id}"
+            ) from exc
+
+        if not isinstance(metadata, dict):
+            raise TelephonyError(
+                f"VoChi recording metadata for {unique_id} has no download_url"
+            )
+        download_url = str(metadata.get("download_url") or "").strip()
+        if not download_url:
+            raise TelephonyError(
+                f"VoChi recording metadata for {unique_id} has no download_url"
+            )
+
+        try:
+            recording_response = self._http.get(
+                download_url,
+                headers={"Accept": "audio/*"},
+                timeout=120,
+            )
+            recording_response.raise_for_status()
         except requests.RequestException as exc:
-            raise TelephonyError(f"Failed to fetch recording {unique_id}: {exc}") from exc
-        return Recording(unique_id=unique_id, content=response.content, source_uri=url)
+            raise TelephonyError(
+                f"Failed to download VoChi recording {unique_id}"
+            ) from exc
+
+        permanent_url = str(metadata.get("recording_url") or "").strip()
+        source_uri = permanent_url or f"{metadata_url}/{unique_id}"
+        content_type = (
+            str(recording_response.headers.get("Content-Type") or "audio/mpeg")
+            .split(";", 1)[0]
+            .strip()
+        )
+        return Recording(
+            unique_id=unique_id,
+            content=recording_response.content,
+            content_type=content_type,
+            source_uri=source_uri,
+        )
