@@ -3,8 +3,8 @@
 ## Goal
 
 Replace the legacy `crm.vochi.by/api/calllogs` integration with the new
-`bot.vochi.by/api/v1` API. The application must list all unsuccessful
-external calls for a selected day and download available recordings for
+`bot.vochi.by/api/v1` API. The application must list answered calls across
+all phone numbers for a selected day and download available recordings for
 playback and AI analysis.
 
 ## Scope
@@ -37,21 +37,22 @@ parameter for VoChi.
 
 `VochiTelephonyAdapter.list_calls()` requests:
 
-`GET {base_url}/unsuccessful-calls`
+`GET {base_url}/calls`
 
 with these query parameters:
 
+- `phone`: an explicitly supplied empty string, which makes the current VoChi
+  API return calls across all phone numbers
 - `key`: configured API key
 - `date_from`: selected day in `YYYY-MM-DD`
 - `date_to`: the same selected day
-- `direction`: derived from the existing call-type filter:
-  - no filter -> `all`
-  - incoming (`0`) -> `incoming`
-  - outgoing (`1`) -> `outgoing`
-  - internal (`2`) -> return an empty result without an HTTP request because
-    the endpoint excludes internal calls
-- `limit`: `100`
+- `limit`: `50`
 - `offset`: starts at `0` and increases by the number of returned calls
+
+The `phone` query parameter must be present even though its value is empty.
+Omitting it causes the API to return HTTP 422. This all-number behavior is
+not documented by VoChi, so adapter tests must explicitly protect the request
+format.
 
 The adapter follows pagination until one of these conditions is met:
 
@@ -61,6 +62,17 @@ The adapter follows pagination until one of these conditions is met:
 
 This prevents an infinite loop if the server returns inconsistent pagination
 metadata.
+
+After all pages are collected, the adapter excludes unsuccessful calls:
+
+- `call_status=0` -> excluded
+- `call_status=1` -> excluded
+- `call_status=2` -> included as answered
+
+The UI is not changed and no new phone-number or call-status controls are
+added. Existing date, time, and call-type controls continue to work. The
+call-type filter is applied client-side to the `call_type` field after the
+adapter has fetched the complete result set.
 
 Each API call is mapped to `CallLogEntry`:
 
@@ -115,8 +127,11 @@ for downloading audio.
 
 Adapter tests cover:
 
-- request parameters for all/incoming/outgoing directions;
-- internal-call filtering without an HTTP request;
+- `/calls` requests with an explicitly empty `phone` parameter;
+- pagination across calls for all phone numbers;
+- exclusion of `call_status` values `0` and `1`;
+- inclusion of answered calls with `call_status=2`;
+- existing incoming, outgoing, and internal call-type filtering;
 - multi-page pagination and termination;
 - mapping valid and malformed call fields;
 - skipping entries without `unique_id`;

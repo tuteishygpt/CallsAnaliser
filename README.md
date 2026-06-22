@@ -38,8 +38,18 @@ For a tenant on **VoChi API v1**, set:
 - `<TENANT>_VOCHI_API_KEY=...`
 - `<TENANT>_VOCHI_BASE_URL=https://bot.vochi.by/api/v1` (optional)
 
-The VoChi call list contains unsuccessful incoming and outgoing calls from
-`/unsuccessful-calls`. Recordings are resolved through `/recording` and then
+The main VoChi list is loaded from `/calls` with an explicitly empty
+`phone=` query parameter. This returns calls across all phone numbers; the
+parameter must be present because omitting it produces HTTP 422.
+
+The application keeps answered calls only:
+
+- `call_status=2` — included;
+- `call_status=0` or `call_status=1` — excluded as unsuccessful.
+
+The UI is unchanged. Date, time, and call-type filters continue to apply, and
+no phone-number or call-status field is added. The main integration does not
+use `/unsuccessful-calls`. Recordings are resolved through `/recording` and
 downloaded from the temporary S3 URL returned by the API.
 
 For a new tenant on **MTS VATS**, set tenant-scoped environment variables:
