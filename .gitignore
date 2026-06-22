@@ -2,6 +2,12 @@ __pycache__/
 .pytest_cache/
 *.pyc
 *.ps1
-.env    
 .env
+.env.*
+cred/
+*.json.key
 canvas-genius-492412-c3-53a1b90ffc0d.json
+.cache/
+venv/
+.tmp_*.txt
+.seg.txt

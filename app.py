@@ -22,7 +22,14 @@ load_dotenv()
 #   - set GOOGLE_SERVICE_ACCOUNT_JSON with the raw JSON content.
 # ---------------------------------------------------------------------------
 if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+    import base64
+    sa_b64 = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON_B64", "").strip()
     sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+    if sa_b64 and not sa_json:
+        try:
+            sa_json = base64.b64decode(sa_b64).decode("utf-8").strip()
+        except Exception as exc:
+            print(f"WARNING: GOOGLE_SERVICE_ACCOUNT_JSON_B64 decode failed: {exc}")
     if sa_json:
         try:
             json.loads(sa_json)

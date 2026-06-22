@@ -1,3 +1,15 @@
+---
+title: lix
+emoji: 📞
+colorFrom: indigo
+colorTo: purple
+sdk: gradio
+sdk_version: 6.18.0
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # Calls Analyser
 
 A hexagonal architecture Python project for analysing and summarising call transcripts.
@@ -34,3 +46,18 @@ Field mapping used by MTS VATS integration:
 - `destination` → `CallLogEntry.destination`
 - `duration` → `CallLogEntry.duration_seconds`
 - `record`/`history/record/{uid}` → recording download URL
+
+## Hugging Face Spaces deployment
+
+This Space requires the following Secrets (Settings → Secrets and variables):
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON_B64` — base64-encoded GCP service account JSON
+- `GOOGLE_CLOUD_PROJECT` — your GCP project id
+- `GOOGLE_CLOUD_LOCATION` — Vertex location (`global` works)
+- `DEFAULT_TENANT_ID` — e.g. `lix`
+- `LIX_TELEPHONY_PROVIDER` — `mts_vats`
+- `LIX_MTS_DOMAIN` — e.g. `193991078.vats.mts.by`
+- `LIX_MTS_API_KEY` — MTS VATS API key
+- `VOCHI_UI_PASSWORD` — UI password
+
+Optional: `SUPABASE_URL` + `SUPABASE_KEY` to use Supabase as cache.

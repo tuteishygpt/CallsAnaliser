@@ -14,10 +14,14 @@ class EnvSecretsAdapter(SecretsPort):
     def __init__(self, prefix: str = "") -> None:
         self._prefix = prefix
 
+    @staticmethod
+    def _normalize(part: str) -> str:
+        return part.replace(".", "_").replace("-", "_")
+
     def _build_key(self, key: str, tenant_id: Optional[str]) -> str:
         parts = [self._prefix] if self._prefix else []
         if tenant_id:
-            parts.append(tenant_id.upper())
+            parts.append(self._normalize(tenant_id.upper()))
         parts.append(key)
         return "_".join(part for part in parts if part)
 
