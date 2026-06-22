@@ -182,29 +182,37 @@ class VertexBatchRunner:
         job_id = uuid.uuid4().hex[:12]
         gcs_prefix = f"batch_{job_id}"
 
-        audio_uris = self._upload_audio_to_gcs(tasks, gcs_prefix)
-        input_uri = self._write_jsonl_to_gcs(tasks, audio_uris, prompt_text, gcs_prefix)
-        output_prefix = f"gs://{self._bucket_name}/{gcs_prefix}/output/"
+        try:
+            audio_uris = self._upload_audio_to_gcs(tasks, gcs_prefix)
+            input_uri = self._write_jsonl_to_gcs(
+                tasks,
+                audio_uris,
+                prompt_text,
+                gcs_prefix,
+            )
+            output_prefix = f"gs://{self._bucket_name}/{gcs_prefix}/output/"
 
-        logger.info("Submitting batch job (input=%s, output=%s)…", input_uri, output_prefix)
-        job = self._client.batches.create(
-            model=self._model,
-            src=input_uri,
-            config=types.CreateBatchJobConfig(
-                dest=output_prefix,
-                display_name=f"calls-analyser-{job_id}",
-            ),
-        )
-        job_name = job.name
-        logger.info("Batch job created: %s", job_name)
+            logger.info(
+                "Submitting batch job (input=%s, output=%s)…",
+                input_uri,
+                output_prefix,
+            )
+            job = self._client.batches.create(
+                model=self._model,
+                src=input_uri,
+                config=types.CreateBatchJobConfig(
+                    dest=output_prefix,
+                    display_name=f"calls-analyser-{job_id}",
+                ),
+            )
+            job_name = job.name
+            logger.info("Batch job created: %s", job_name)
 
-        job = self._poll_until_done(job_name)
+            self._poll_until_done(job_name)
 
-        results = self._read_output_jsonl(tasks, gcs_prefix)
-
-        self._cleanup_gcs(gcs_prefix)
-
-        return results
+            return self._read_output_jsonl(tasks, gcs_prefix)
+        finally:
+            self._cleanup_gcs(gcs_prefix)
 
     # ------------------------------------------------------------------ #
     # Step 1: upload audio files to GCS
