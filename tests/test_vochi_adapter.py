@@ -56,16 +56,54 @@ def make_adapter(session: FakeSession, api_key: str = "secret-api-key") -> Vochi
     )
 
 
-@pytest.mark.parametrize(
-    ("call_type", "direction"),
-    [(None, "all"), (0, "incoming"), (1, "outgoing")],
-)
-def test_list_calls_uses_unsuccessful_calls_parameters(
-    call_type: int | None,
-    direction: str,
-) -> None:
+def test_list_calls_requests_all_phone_numbers() -> None:
     session = FakeSession()
     session.queue(FakeResponse(json_data={"calls": [], "total": 0}))
+
+    entries = list(
+        make_adapter(session).list_calls(
+            date(2026, 4, 22),
+            tenant_id="tenant",
+        )
+    )
+
+    assert entries == []
+    url, kwargs = session.calls[0]
+    assert url == "https://bot.example/api/v1/calls"
+    assert kwargs["params"] == {
+        "phone": "",
+        "key": "secret-api-key",
+        "date_from": "2026-04-22",
+        "date_to": "2026-04-22",
+        "limit": 50,
+        "offset": 0,
+    }
+
+
+@pytest.mark.parametrize("call_type", [None, 0, 1, 2])
+def test_list_calls_keeps_answered_calls_for_selected_type(
+    call_type: int | None,
+) -> None:
+    session = FakeSession()
+    session.queue(
+        FakeResponse(
+            json_data={
+                "calls": [
+                    {
+                        "unique_id": f"answered-{item_type}",
+                        "call_status": 2,
+                        "call_type": item_type,
+                    }
+                    for item_type in (0, 1, 2)
+                ]
+                + [
+                    {"unique_id": "failed-0", "call_status": 0, "call_type": 0},
+                    {"unique_id": "failed-1", "call_status": 1, "call_type": 1},
+                ],
+                "total": 5,
+            }
+        )
+    )
 
     entries = list(
         make_adapter(session).list_calls(
@@ -75,32 +113,11 @@ def test_list_calls_uses_unsuccessful_calls_parameters(
         )
     )
 
-    assert entries == []
-    url, kwargs = session.calls[0]
-    assert url == "https://bot.example/api/v1/unsuccessful-calls"
-    assert kwargs["params"] == {
-        "key": "secret-api-key",
-        "date_from": "2026-04-22",
-        "date_to": "2026-04-22",
-        "direction": direction,
-        "limit": 100,
-        "offset": 0,
-    }
-
-
-def test_list_calls_returns_empty_for_internal_calls_without_http_request() -> None:
-    session = FakeSession()
-
-    entries = list(
-        make_adapter(session).list_calls(
-            date(2026, 4, 22),
-            tenant_id="tenant",
-            call_type=2,
-        )
-    )
-
-    assert entries == []
-    assert session.calls == []
+    expected_types = (0, 1, 2) if call_type is None else (call_type,)
+    assert [entry.unique_id for entry in entries] == [
+        f"answered-{item_type}" for item_type in expected_types
+    ]
+    assert all(entry.raw["call_status"] == 2 for entry in entries)
 
 
 def test_list_calls_paginates_and_maps_entries() -> None:
@@ -109,7 +126,8 @@ def test_list_calls_paginates_and_maps_entries() -> None:
         {
             "unique_id": f"uid-{index}",
             "phone_number": "+375290000000",
-            "call_status": "no_answer",
+            "call_status": 2,
+            "call_type": 0,
             "start_time": "2026-04-22T10:15:30+03:00",
             "duration_seconds": 12,
             "participants": [
@@ -118,40 +136,46 @@ def test_list_calls_paginates_and_maps_entries() -> None:
             ],
             "recording_url": f"https://bot.example/recording/uid-{index}",
         }
-        for index in range(100)
+        for index in range(50)
     ]
-    session.queue(FakeResponse(json_data={"calls": first_page, "total": 101}))
+    session.queue(FakeResponse(json_data={"calls": first_page, "total": 52}))
     session.queue(
         FakeResponse(
             json_data={
                 "calls": [
                     {
-                        "unique_id": "uid-100",
+                        "unique_id": "uid-50",
                         "phone_number": "+375291111111",
+                        "call_status": 2,
+                        "call_type": 1,
                         "start_time": "invalid",
                         "duration_seconds": "invalid",
                         "participants": [{"extension": "152"}],
                     },
-                    {"unique_id": "", "phone_number": "+375292222222"},
+                    {
+                        "unique_id": "failed",
+                        "call_status": 1,
+                        "call_type": 1,
+                    },
                 ],
-                "total": 101,
+                "total": 52,
             }
         )
     )
 
     entries = list(make_adapter(session).list_calls(date(2026, 4, 22), "tenant"))
 
-    assert len(entries) == 101
+    assert len(entries) == 51
     assert entries[0].unique_id == "uid-0"
     assert entries[0].caller_id == "+375290000000"
     assert entries[0].destination == "150, 151"
     assert entries[0].duration_seconds == 12
     assert entries[0].started_at.isoformat() == "2026-04-22T10:15:30+03:00"
-    assert entries[0].raw["call_status"] == "no_answer"
-    assert entries[-1].unique_id == "uid-100"
+    assert entries[0].raw["call_status"] == 2
+    assert entries[-1].unique_id == "uid-50"
     assert entries[-1].started_at is None
     assert entries[-1].duration_seconds is None
-    assert session.calls[1][1]["params"]["offset"] == 100
+    assert session.calls[1][1]["params"]["offset"] == 50
 
 
 def test_list_calls_rejects_payload_without_calls() -> None:

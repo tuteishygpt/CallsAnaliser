@@ -24,7 +24,7 @@ class _HTTPClient:
 class VochiTelephonyAdapter(TelephonyPort):
     """Telephony adapter for the VoChi bot API."""
 
-    _PAGE_SIZE = 100
+    _PAGE_SIZE = 50
 
     def __init__(
         self,
@@ -79,20 +79,16 @@ class VochiTelephonyAdapter(TelephonyPort):
     ) -> Iterable[CallLogEntry]:
         del tenant_id, time_from, time_to
 
-        direction_by_type = {None: "all", 0: "incoming", 1: "outgoing"}
-        if call_type == 2:
-            return []
-        direction = direction_by_type.get(call_type, "all")
-        url = f"{self._base_url}/unsuccessful-calls"
+        url = f"{self._base_url}/calls"
         offset = 0
         entries: list[CallLogEntry] = []
 
         while True:
             params: dict[str, str | int] = {
+                "phone": "",
                 "key": self._api_key,
                 "date_from": day.isoformat(),
                 "date_to": day.isoformat(),
-                "direction": direction,
                 "limit": self._PAGE_SIZE,
                 "offset": offset,
             }
@@ -106,7 +102,7 @@ class VochiTelephonyAdapter(TelephonyPort):
                 response.raise_for_status()
                 payload = response.json()
             except (requests.RequestException, ValueError) as exc:
-                raise TelephonyError("Failed to fetch VoChi unsuccessful calls") from exc
+                raise TelephonyError("Failed to fetch VoChi calls") from exc
 
             if not isinstance(payload, dict) or not isinstance(payload.get("calls"), list):
                 raise TelephonyError("VoChi returned an invalid calls payload")
@@ -117,6 +113,12 @@ class VochiTelephonyAdapter(TelephonyPort):
                     continue
                 unique_id = str(item.get("unique_id") or "").strip()
                 if not unique_id:
+                    continue
+                item_status = self._parse_duration(item.get("call_status"))
+                item_type = self._parse_duration(item.get("call_type"))
+                if item_status != 2:
+                    continue
+                if call_type is not None and item_type != call_type:
                     continue
                 entries.append(
                     CallLogEntry(
