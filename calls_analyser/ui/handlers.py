@@ -602,6 +602,35 @@ class UIHandlers:
             results_df.to_csv(tmp.name, index=False)
             return gr.update(value=tmp.name, visible=True), "✅ File is ready to save."
 
+    def send_results_email(
+        self,
+        results_df,
+        filter_option: str,
+        report_date,
+        tenant_id: str,
+        authed: bool,
+    ) -> str:
+        """Send the complete CSV and a filtered HTML table by email."""
+        if not authed:
+            return "🔐 Enter the password to send email."
+        if results_df is None or results_df.empty:
+            return "❌ No data to send."
+        if self.deps.email_report_service is None:
+            return "❌ Email is not configured. Set GOOGLE_app."
+
+        recipient = os.environ.get("EMAIL_TO", "").strip() or "tuttstt@gmail.com"
+        try:
+            day = utils.parse_day(report_date)
+            self.deps.email_report_service.send(
+                results_df,
+                filter_option=filter_option or "All",
+                report_date=day.isoformat(),
+                tenant_id=(tenant_id or config.DEFAULT_TENANT_ID).strip(),
+            )
+            return f"✅ Email sent to {recipient}."
+        except Exception as exc:
+            return f"❌ Email sending failed: {exc}"
+
     @staticmethod
     def check_password(pwd: str):
         """Праверка доступу ў UI."""

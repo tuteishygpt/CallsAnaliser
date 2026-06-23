@@ -10,6 +10,7 @@ from calls_analyser.batch_params import BatchParams, load_batch_params
 
 try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
+    from calls_analyser.adapters.mail.gmail import GMAIL_ADDRESS, GmailSMTPAdapter
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
     from calls_analyser.adapters.storage.supabase_storage import SupabaseCache
@@ -20,11 +21,14 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.services.analysis import AnalysisOptions, AnalysisService
     from calls_analyser.services.cache import FileBackedCache
     from calls_analyser.services.call_log import CallLogService
+    from calls_analyser.services.email_report import EmailReportService
     from calls_analyser.services.prompt import PromptService
     from calls_analyser.services.registry import ProviderRegistry
     from calls_analyser.services.tenant import TenantService
 except ImportError:  # pragma: no cover - executed when project deps unavailable
     GeminiAIAdapter = None  # type: ignore
+    GMAIL_ADDRESS = "tuttstt@gmail.com"
+    GmailSMTPAdapter = None  # type: ignore
     EnvSecretsAdapter = None  # type: ignore
     LocalStorageAdapter = None  # type: ignore
     SupabaseCache = None  # type: ignore
@@ -37,6 +41,7 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     AnalysisService = None  # type: ignore
     FileBackedCache = None  # type: ignore
     CallLogService = None  # type: ignore
+    EmailReportService = None  # type: ignore
     PromptService = None  # type: ignore
     ProviderRegistry = Dict  # type: ignore
     TenantService = None  # type: ignore
@@ -52,6 +57,7 @@ class AppDependencies:
     tenant_service: Any
     call_log_service: Any
     analysis_service: Any
+    email_report_service: Any
     model_options: List[Tuple[str, str]]
     model_choices: List[Tuple[str, str]]
     model_default: str
@@ -156,6 +162,7 @@ def build_dependencies() -> AppDependencies:
             tenant_service=None,
             call_log_service=None,
             analysis_service=None,
+            email_report_service=None,
             model_options=model_options,
             model_choices=model_choices,
             model_default=model_default,
@@ -189,6 +196,13 @@ def build_dependencies() -> AppDependencies:
         cache = FileBackedCache(cache_path)
 
     analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service, cache=cache)
+    email_report_service = None
+    if os.environ.get("GOOGLE_app", "").strip():
+        email_report_service = EmailReportService(
+            GmailSMTPAdapter.from_env(),
+            sender=GMAIL_ADDRESS,
+            recipient=os.environ.get("EMAIL_TO", "").strip() or GMAIL_ADDRESS,
+        )
 
     model_options = _build_model_options(ai_registry)
     model_choices = model_options or [MODEL_PLACEHOLDER_CHOICE]
@@ -215,6 +229,7 @@ def build_dependencies() -> AppDependencies:
         tenant_service=tenant_service,
         call_log_service=call_log_service,
         analysis_service=analysis_service,
+        email_report_service=email_report_service,
         model_options=model_options,
         model_choices=model_choices,
         model_default=model_default,

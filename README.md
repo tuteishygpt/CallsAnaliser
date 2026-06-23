@@ -81,3 +81,20 @@ This Space requires the following Secrets (Settings → Secrets and variables):
 - `VOCHI_UI_PASSWORD` — UI password
 
 Optional: `SUPABASE_URL` + `SUPABASE_KEY` to use Supabase as cache.
+
+## Email reports
+
+Batch results can be sent through Gmail as:
+
+- a filtered HTML table in the email body;
+- a UTF-8 CSV attachment containing all batch results.
+
+Configure:
+
+- `GOOGLE_app` — the Gmail app password for `tuttstt@gmail.com`;
+- `EMAIL_TO` — optional recipient address. Defaults to `tuttstt@gmail.com`.
+
+The Gradio UI provides a **Send by email** button. The selected batch filter
+controls the HTML table, while the CSV remains unfiltered. Scheduled and CLI
+daily batches send `Needs follow-up` rows in the HTML table after processing
+and attach the complete CSV.

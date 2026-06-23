@@ -11,6 +11,7 @@ import sys
 import tempfile
 from typing import List, Optional
 from dotenv import load_dotenv
+import pandas as pd
 
 load_dotenv()
 
@@ -37,6 +38,7 @@ try:
     from calls_analyser.ui.dependencies import build_dependencies
     from calls_analyser.ui import utils
     from calls_analyser.services.gemini_batch import VertexBatchRunner, BatchTask, guess_mime_type
+    from calls_analyser.services.batch_results import build_error_row, build_success_row
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult
     # from calls_analyser.domain.exceptions import AIModelError
@@ -158,6 +160,8 @@ def run_batch_process(
 
     tasks: List[BatchTask] = []
     task_indices: List[int] = []
+    result_text_by_id: dict[str, str] = {}
+    error_by_id: dict[str, str] = {}
 
     # Check cache and identify missing
     cached_count = 0
@@ -175,6 +179,7 @@ def run_batch_process(
         
         if cached_result:
             cached_count += 1
+            result_text_by_id[entry.unique_id] = cached_result.text
         else:
             try:
                 handle = deps.call_log_service.ensure_recording(entry.unique_id, tenant)
@@ -189,26 +194,28 @@ def run_batch_process(
                 task_indices.append(idx)
             except Exception as e:
                 logger.error(f"Failed to prepare audio for {entry.unique_id}: {e}")
+                error_by_id[entry.unique_id] = f"❌ {e}"
 
     logger.info(f"Summary: {len(entries)} total. {cached_count} already cached. {len(tasks)} to process.")
 
-    if not tasks:
-        logger.info("Nothing to process. All done.")
-        return
+    result_map: dict[str, str] = {}
+    if tasks:
+        # Run batch via Vertex AI Batch API
+        logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
+        runner = VertexBatchRunner(model=deps.batch_model_key)
 
-    # Run batch via Vertex AI Batch API
-    logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
-    runner = VertexBatchRunner(model=deps.batch_model_key)
-    
-    try:
-        result_map = runner.run_batch(
-            tasks,
-            merged_prompt,
-            chunk_size=deps.batch_params.batch_size,
-        )
-    except Exception as e:
-        logger.error(f"Batch execution failed: {e}")
-        return
+        try:
+            result_map = runner.run_batch(
+                tasks,
+                merged_prompt,
+                chunk_size=deps.batch_params.batch_size,
+            )
+        except Exception as e:
+            logger.error(f"Batch execution failed: {e}")
+            for task in tasks:
+                error_by_id[task.key] = f"❌ Batch execution failed: {e}"
+    else:
+        logger.info("Nothing new to process; preparing report from cached results.")
 
     # Process results and save to cache
     success_count = 0
@@ -234,12 +241,44 @@ def run_batch_process(
                 metadata={"batch": True}
             )
             deps.analysis_service._cache[cache_key] = new_result
+            result_text_by_id[entry.unique_id] = text_result
             success_count += 1
             logger.info(f"Processed {entry.unique_id} successfully.")
         else:
             logger.error(f"Failed or error for {entry.unique_id}: {text_result}")
+            error_by_id[entry.unique_id] = text_result or "No result returned."
 
     logger.info(f"Batch completed. Successfully processed and cached: {success_count}/{len(tasks)}")
+
+    rows = []
+    for entry in entries:
+        if entry.unique_id in result_text_by_id:
+            rows.append(build_success_row(entry, tenant, result_text_by_id[entry.unique_id]))
+        else:
+            rows.append(
+                build_error_row(
+                    entry,
+                    error_by_id.get(entry.unique_id, "No result returned."),
+                )
+            )
+    results_df = pd.DataFrame(rows)
+
+    email_report_service = getattr(deps, "email_report_service", None)
+    if email_report_service is not None:
+        try:
+            email_report_service.send(
+                results_df,
+                filter_option="Needs follow-up",
+                report_date=day.isoformat(),
+                tenant_id=tenant.tenant_id,
+            )
+            logger.info("Email report sent successfully.")
+        except Exception as e:
+            logger.error(f"Email report failed: {e}")
+    else:
+        logger.warning("Email report skipped: GOOGLE_app is not configured.")
+
+    return results_df
 
 
 def main():

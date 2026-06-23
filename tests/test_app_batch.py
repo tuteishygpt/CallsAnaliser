@@ -45,6 +45,14 @@ class _StubAnalysisService:
         return SimpleNamespace(text=response)
 
 
+class _RecordingEmailReportService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def send(self, results, **kwargs) -> None:  # noqa: ANN001
+        self.calls.append((results.copy(), kwargs))
+
+
 def _configure_batch_environment(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -169,3 +177,31 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
+
+
+def test_send_results_email_uses_selected_filter_and_full_results(monkeypatch) -> None:
+    report_service = _RecordingEmailReportService()
+    monkeypatch.setattr(app.handlers.deps, "email_report_service", report_service, raising=False)
+    full_results = pd.DataFrame(
+        [
+            {"UniqueId": "call-1", "Needs follow-up": "Yes"},
+            {"UniqueId": "call-2", "Needs follow-up": "No"},
+        ]
+    )
+
+    status = app.handlers.send_results_email(
+        full_results,
+        "No follow-up",
+        "2026-06-22",
+        "lix",
+        True,
+    )
+
+    assert status == "✅ Email sent to tuttstt@gmail.com."
+    sent_results, options = report_service.calls[0]
+    assert list(sent_results["UniqueId"]) == ["call-1", "call-2"]
+    assert options == {
+        "filter_option": "No follow-up",
+        "report_date": "2026-06-22",
+        "tenant_id": "lix",
+    }

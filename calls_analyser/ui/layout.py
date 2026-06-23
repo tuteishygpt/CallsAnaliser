@@ -75,6 +75,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                         visible=(getattr(config, "BATCH_CUSTOM", "") == "on"),
                     )
                     save_btn = gr.Button("Save to file", scale=0)
+                    email_btn = gr.Button("Send by email", scale=0)
 
                 with gr.Group(visible=False) as custom_prompt_modal:
                     gr.Markdown("### Batch analyze custom prompt")
@@ -266,6 +267,12 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             handlers.export_results,
             inputs=[batch_results_state],
             outputs=[batch_file, batch_status_md],
+        )
+
+        email_btn.click(
+            handlers.send_results_email,
+            inputs=[batch_results_state, filter_radio, date_inp, tenant_tb, authed],
+            outputs=[batch_status_md],
         )
 
         tpl_dd.change(
