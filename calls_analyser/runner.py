@@ -41,6 +41,7 @@ try:
     from calls_analyser.services.batch_results import build_error_row, build_success_row
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult
+    from calls_analyser.services.analysis import CacheKey
     # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
     # If run directly from outside the package context without installation
@@ -93,6 +94,27 @@ def get_target_date(date_str: str | None) -> datetime.date:
     else:
         # Default to yesterday
         return datetime.date.today() - datetime.timedelta(days=1)
+
+
+def _get_cached_results(cache, cache_keys: list[CacheKey]) -> dict[CacheKey, AnalysisResult]:  # noqa: ANN001
+    get_many = getattr(cache, "get_many", None)
+    if callable(get_many):
+        try:
+            return dict(get_many(cache_keys))
+        except Exception as e:
+            logger.warning(f"Bulk cache lookup failed: {e}. Continuing with uncached items.")
+            return {}
+
+    cached_results: dict[CacheKey, AnalysisResult] = {}
+    for cache_key in cache_keys:
+        try:
+            cached_result = cache.get(cache_key)
+        except Exception as e:
+            logger.warning(f"Cache lookup failed for {cache_key[1]}: {e}")
+            continue
+        if cached_result:
+            cached_results[cache_key] = cached_result
+    return cached_results
 
 
 def run_batch_process(
@@ -163,20 +185,32 @@ def run_batch_process(
     result_text_by_id: dict[str, str] = {}
     error_by_id: dict[str, str] = {}
 
+    cache_entries: list[tuple[int, object, CacheKey]] = []
+    for idx, entry in enumerate(entries):
+        cache_entries.append(
+            (
+                idx,
+                entry,
+                (
+                    tenant.tenant_id,
+                    entry.unique_id,
+                    deps.batch_prompt_key,
+                    provider_name,
+                    deps.batch_model_key,
+                    custom_fragment,
+                ),
+            )
+        )
+    cached_results = _get_cached_results(
+        deps.analysis_service._cache,
+        [cache_key for _, _, cache_key in cache_entries],
+    )
+
     # Check cache and identify missing
     cached_count = 0
-    for idx, entry in enumerate(entries):
-        cache_key = (
-            tenant.tenant_id,
-            entry.unique_id,
-            deps.batch_prompt_key,
-            provider_name,
-            deps.batch_model_key,
-            custom_fragment,
-        )
-        
-        cached_result = deps.analysis_service._cache.get(cache_key)
-        
+    for idx, entry, cache_key in cache_entries:
+        cached_result = cached_results.get(cache_key)
+
         if cached_result:
             cached_count += 1
             result_text_by_id[entry.unique_id] = cached_result.text

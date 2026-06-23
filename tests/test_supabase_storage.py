@@ -74,6 +74,56 @@ class TestSupabaseCache:
         with pytest.raises(KeyError):
             _ = cache[sample_key]
 
+    def test_get_many_fetches_matching_keys_in_one_query(self, cache, sample_result):
+        key_1 = ("tenant1", "uid123", "prompt1", "gemini", "gemini-pro", "custom")
+        key_2 = ("tenant1", "uid456", "prompt1", "gemini", "gemini-pro", "custom")
+        other_key = ("tenant1", "uid999", "prompt1", "gemini", "gemini-pro", "custom")
+        mock_response = MagicMock()
+        mock_response.data = [
+            {
+                "tenant_id": "tenant1",
+                "call_unique_id": "uid123",
+                "prompt_key": "prompt1",
+                "provider_name": "gemini",
+                "model_key": "gemini-pro",
+                "custom_fragment": "custom",
+                "result_text": sample_result.text,
+                "metadata": sample_result.metadata,
+            },
+            {
+                "tenant_id": "tenant1",
+                "call_unique_id": "uid456",
+                "prompt_key": "prompt1",
+                "provider_name": "gemini",
+                "model_key": "gemini-pro",
+                "custom_fragment": "custom",
+                "result_text": "Second result",
+                "metadata": {},
+            },
+            {
+                "tenant_id": "tenant1",
+                "call_unique_id": "uid-not-requested",
+                "prompt_key": "prompt1",
+                "provider_name": "gemini",
+                "model_key": "gemini-pro",
+                "custom_fragment": "custom",
+                "result_text": "Unexpected result",
+                "metadata": {},
+            },
+        ]
+        builder = cache._table.select.return_value
+        builder.eq.return_value = builder
+        builder.in_.return_value.execute.return_value = mock_response
+
+        results = cache.get_many([key_1, key_2, other_key])
+
+        assert set(results) == {key_1, key_2}
+        assert results[key_1].text == "Analysis result"
+        assert results[key_2].text == "Second result"
+        cache._table.select.assert_called_once_with("*")
+        builder.in_.assert_called_once_with("call_unique_id", ["uid123", "uid456", "uid999"])
+        assert builder.eq.call_count == 5
+
     def test_setitem(self, cache, sample_key, sample_result):
         cache[sample_key] = sample_result
 

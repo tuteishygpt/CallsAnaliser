@@ -1,8 +1,9 @@
 """Supabase-backed cache implementation."""
 from __future__ import annotations
 
+from collections import defaultdict
 import json
-from typing import Iterator, MutableMapping, Any
+from typing import Iterable, Iterator, MutableMapping, Any
 
 from supabase import Client, create_client
 from postgrest.base_request_builder import APIResponse
@@ -47,6 +48,17 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
             metadata=record.get("metadata", {}) or {},
         )
 
+    def _record_to_key(self, record: dict[str, Any]) -> CacheKey:
+        """Convert DB record columns to a CacheKey."""
+        return (
+            record["tenant_id"],
+            record["call_unique_id"],
+            record["prompt_key"],
+            record["provider_name"],
+            record["model_key"],
+            record.get("custom_fragment") or "",
+        )
+
     def __getitem__(self, key: CacheKey) -> AnalysisResult:
         # Check local cache first (optional optimization)
         if key in self._local_cache:
@@ -66,6 +78,47 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
         # Update local cache
         self._local_cache[key] = result
         return result
+
+    def get_many(self, keys: Iterable[CacheKey]) -> dict[CacheKey, AnalysisResult]:
+        """Fetch many cache entries while grouping compatible keys into bulk DB queries."""
+        unique_keys = list(dict.fromkeys(keys))
+        results: dict[CacheKey, AnalysisResult] = {}
+        pending_keys: list[CacheKey] = []
+
+        for key in unique_keys:
+            if key in self._local_cache:
+                results[key] = self._local_cache[key]
+            else:
+                pending_keys.append(key)
+
+        groups: dict[tuple[str, str, str, str, str], list[CacheKey]] = defaultdict(list)
+        for key in pending_keys:
+            tenant_id, call_unique_id, prompt_key, provider_name, model_key, custom_fragment = key
+            groups[(tenant_id, prompt_key, provider_name, model_key, custom_fragment)].append(key)
+
+        for (tenant_id, prompt_key, provider_name, model_key, custom_fragment), group_keys in groups.items():
+            requested_keys = set(group_keys)
+            call_unique_ids = [key[1] for key in group_keys]
+            response: APIResponse = (
+                self._table.select("*")
+                .eq("tenant_id", tenant_id)
+                .eq("prompt_key", prompt_key)
+                .eq("provider_name", provider_name)
+                .eq("model_key", model_key)
+                .eq("custom_fragment", custom_fragment)
+                .in_("call_unique_id", call_unique_ids)
+                .execute()
+            )
+
+            for record in response.data or []:
+                record_key = self._record_to_key(record)
+                if record_key not in requested_keys:
+                    continue
+                result = self._record_to_result(record)
+                self._local_cache[record_key] = result
+                results[record_key] = result
+
+        return results
 
     def __setitem__(self, key: CacheKey, value: AnalysisResult) -> None:
         # Prepare data for insertion

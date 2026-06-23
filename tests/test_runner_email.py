@@ -43,6 +43,19 @@ class _RecordingEmailReportService:
         self.calls.append((results.copy(), kwargs))
 
 
+class _BulkOnlyCache:
+    def __init__(self, results) -> None:  # noqa: ANN001
+        self._results = results
+        self.requested_keys = []
+
+    def get_many(self, keys):  # noqa: ANN001
+        self.requested_keys = list(keys)
+        return {key: self._results[key] for key in self.requested_keys if key in self._results}
+
+    def get(self, _key):  # noqa: ANN001
+        raise AssertionError("runner should use bulk cache lookup")
+
+
 def test_run_batch_sends_cached_results_by_email() -> None:
     day = dt.date(2026, 6, 22)
     tenant = SimpleNamespace(
@@ -102,3 +115,64 @@ def test_run_batch_sends_cached_results_by_email() -> None:
         "report_date": "2026-06-22",
         "tenant_id": "lix",
     }
+
+
+def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entries = [
+        SimpleNamespace(
+            started_at=dt.datetime(2026, 6, 22, 9, idx),
+            caller_id=f"Client {idx}",
+            destination="Support",
+            duration_seconds=90,
+            unique_id=f"call-{idx}",
+            raw={"recording_url": f"https://example.test/permanent/call-{idx}"},
+        )
+        for idx in range(2)
+    ]
+    provider = SimpleNamespace(provider_name="gemini")
+    cache_keys = [
+        (
+            "lix",
+            entry.unique_id,
+            "BATCH_PROMPT",
+            "gemini",
+            "models/gemini-test",
+            "",
+        )
+        for entry in entries
+    ]
+    cache = _BulkOnlyCache(
+        {
+            key: AnalysisResult(
+                text=json.dumps({"needs_follow_up": False, "reason": key[1]}),
+                model="models/gemini-test",
+                provider="gemini",
+            )
+            for key in cache_keys
+        }
+    )
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_CallLogService(entries),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(provider),
+        analysis_service=SimpleNamespace(_cache=cache),
+        email_report_service=None,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert cache.requested_keys == cache_keys
+    assert list(results["UniqueId"]) == ["call-0", "call-1"]
+    assert list(results["Reason"]) == ["call-0", "call-1"]
