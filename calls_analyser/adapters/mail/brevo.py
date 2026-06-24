@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from typing import Callable
 
 import requests
@@ -47,9 +48,11 @@ class BrevoHTTPSAdapter:
         sender = {"email": message.sender}
         if self._sender_name:
             sender["name"] = self._sender_name
+
+        recipients = [r.strip() for r in re.split(r"[,;]+", message.recipient) if r.strip()]
         payload = {
             "sender": sender,
-            "to": [{"email": message.recipient}],
+            "to": [{"email": r} for r in recipients],
             "subject": message.subject,
             "htmlContent": message.html_body,
             "attachment": [

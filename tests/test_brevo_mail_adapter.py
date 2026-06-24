@@ -101,3 +101,27 @@ def test_from_env_uses_optional_sender_display_name(monkeypatch) -> None:
         "email": "sender@example.com",
         "name": "Calls analysis",
     }
+
+
+def test_send_delivers_to_multiple_comma_separated_recipients(monkeypatch) -> None:
+    fake_post = FakeHTTPPost()
+    monkeypatch.setenv("BREVO_API_KEY", "brevo-secret")
+    monkeypatch.delenv("EMAIL_FROM_NAME", raising=False)
+    adapter = BrevoHTTPSAdapter.from_env(http_post=fake_post)
+    message = MailMessage(
+        sender="sender@example.com",
+        recipient="alice@example.com, bob@example.com; carol@example.com",
+        subject="Daily report",
+        html_body="<p>Report</p>",
+        attachment_filename="report.csv",
+        attachment_content=b"col\r\nval\r\n",
+    )
+
+    adapter.send(message)
+
+    to_field = fake_post.calls[0]["json"]["to"]
+    assert to_field == [
+        {"email": "alice@example.com"},
+        {"email": "bob@example.com"},
+        {"email": "carol@example.com"},
+    ]

@@ -64,3 +64,22 @@ def test_send_uses_gmail_ssl_and_attaches_csv(monkeypatch) -> None:
     assert attachment.get_filename() == "report.csv"
     assert attachment.get_content_type() == "text/csv"
     assert attachment.get_payload(decode=True) == b"column\r\nvalue\r\n"
+
+
+def test_send_uses_comma_joined_to_header_for_multiple_recipients(monkeypatch) -> None:
+    FakeSMTP.instances.clear()
+    monkeypatch.setenv("GOOGLE_app", "abcd efgh ijkl mnop")
+    adapter = GmailSMTPAdapter.from_env(smtp_factory=FakeSMTP)
+    message = MailMessage(
+        sender="tuttstt@gmail.com",
+        recipient="alice@example.com, bob@example.com; carol@example.com",
+        subject="Daily report",
+        html_body="<p>Report</p>",
+        attachment_filename="report.csv",
+        attachment_content=b"column\r\nvalue\r\n",
+    )
+
+    adapter.send(message)
+
+    smtp = FakeSMTP.instances[0]
+    assert smtp.sent_message["To"] == "alice@example.com, bob@example.com, carol@example.com"

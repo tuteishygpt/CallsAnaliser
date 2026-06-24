@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 import os
+import re
 import smtplib
 from typing import Callable
 
@@ -44,7 +45,8 @@ class GmailSMTPAdapter:
     def send(self, message: MailMessage) -> None:
         email = EmailMessage()
         email["From"] = message.sender
-        email["To"] = message.recipient
+        recipients = [r.strip() for r in re.split(r"[,;]+", message.recipient) if r.strip()]
+        email["To"] = ", ".join(recipients)
         email["Subject"] = message.subject
         email.set_content("This report requires an HTML-capable email client.")
         email.add_alternative(message.html_body, subtype="html")
