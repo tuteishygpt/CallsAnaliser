@@ -310,7 +310,7 @@ def run_batch_process(
         except Exception as e:
             logger.error(f"Email report failed: {e}")
     else:
-        logger.warning("Email report skipped: GOOGLE_app is not configured.")
+        logger.warning("Email report skipped: BREVO_API_KEY or GOOGLE_app is not configured.")
 
     return results_df
 

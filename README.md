@@ -84,15 +84,25 @@ Optional: `SUPABASE_URL` + `SUPABASE_KEY` to use Supabase as cache.
 
 ## Email reports
 
-Batch results can be sent through Gmail as:
+Batch results can be sent through Brevo HTTPS API, with Gmail SMTP as a fallback, as:
 
 - a filtered HTML table in the email body;
 - a UTF-8 CSV attachment containing all batch results.
 
-Configure:
+Configure Brevo as the primary provider:
+
+- `BREVO_API_KEY` — Brevo transactional email API key;
+- `EMAIL_FROM` — optional verified Brevo sender address. Defaults to `tuttstt@gmail.com`;
+- `EMAIL_FROM_NAME` — optional sender display name. Defaults to no display name;
+- `EMAIL_TO` — optional recipient address. Defaults to `tuttstt@gmail.com`.
+
+Configure Gmail fallback:
 
 - `GOOGLE_app` — the Gmail app password for `tuttstt@gmail.com`;
 - `EMAIL_TO` — optional recipient address. Defaults to `tuttstt@gmail.com`.
+
+When `BREVO_API_KEY` is set, Brevo is used. If it is absent and `GOOGLE_app`
+is set, Gmail is used instead.
 
 The Gradio UI provides a **Send by email** button. The selected batch filter
 controls the HTML table, while the CSV remains unfiltered. Scheduled and CLI

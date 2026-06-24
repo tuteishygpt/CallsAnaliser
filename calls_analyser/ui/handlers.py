@@ -616,7 +616,7 @@ class UIHandlers:
         if results_df is None or results_df.empty:
             return "❌ No data to send."
         if self.deps.email_report_service is None:
-            return "❌ Email is not configured. Set GOOGLE_app."
+            return "❌ Email is not configured. Set BREVO_API_KEY or GOOGLE_app."
 
         recipient = os.environ.get("EMAIL_TO", "").strip() or "tuttstt@gmail.com"
         try:

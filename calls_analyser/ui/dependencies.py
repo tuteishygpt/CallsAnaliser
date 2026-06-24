@@ -10,6 +10,7 @@ from calls_analyser.batch_params import BatchParams, load_batch_params
 
 try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
+    from calls_analyser.adapters.mail.brevo import BrevoHTTPSAdapter
     from calls_analyser.adapters.mail.gmail import GMAIL_ADDRESS, GmailSMTPAdapter
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
@@ -27,6 +28,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.services.tenant import TenantService
 except ImportError:  # pragma: no cover - executed when project deps unavailable
     GeminiAIAdapter = None  # type: ignore
+    BrevoHTTPSAdapter = None  # type: ignore
     GMAIL_ADDRESS = "tuttstt@gmail.com"
     GmailSMTPAdapter = None  # type: ignore
     EnvSecretsAdapter = None  # type: ignore
@@ -135,6 +137,29 @@ def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any)
     return CallLogService(telephony_adapter, storage_adapter)
 
 
+def _build_email_report_service() -> Any:
+    if EmailReportService is None:
+        return None
+
+    recipient = os.environ.get("EMAIL_TO", "").strip() or GMAIL_ADDRESS
+
+    if os.environ.get("BREVO_API_KEY", "").strip() and BrevoHTTPSAdapter is not None:
+        return EmailReportService(
+            BrevoHTTPSAdapter.from_env(),
+            sender=os.environ.get("EMAIL_FROM", "").strip() or GMAIL_ADDRESS,
+            recipient=recipient,
+        )
+
+    if os.environ.get("GOOGLE_app", "").strip() and GmailSMTPAdapter is not None:
+        return EmailReportService(
+            GmailSMTPAdapter.from_env(),
+            sender=GMAIL_ADDRESS,
+            recipient=recipient,
+        )
+
+    return None
+
+
 def build_dependencies() -> AppDependencies:
     """Prepare wiring for services used by the UI."""
     if not config.PROJECT_IMPORTS_AVAILABLE:
@@ -196,13 +221,7 @@ def build_dependencies() -> AppDependencies:
         cache = FileBackedCache(cache_path)
 
     analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service, cache=cache)
-    email_report_service = None
-    if os.environ.get("GOOGLE_app", "").strip():
-        email_report_service = EmailReportService(
-            GmailSMTPAdapter.from_env(),
-            sender=GMAIL_ADDRESS,
-            recipient=os.environ.get("EMAIL_TO", "").strip() or GMAIL_ADDRESS,
-        )
+    email_report_service = _build_email_report_service()
 
     model_options = _build_model_options(ai_registry)
     model_choices = model_options or [MODEL_PLACEHOLDER_CHOICE]
