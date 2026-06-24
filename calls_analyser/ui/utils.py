@@ -10,6 +10,69 @@ import pandas as pd
 from .config import CALL_TYPE_OPTIONS
 
 
+BASE_RESULT_DISPLAY_COLUMNS = [
+    "Start",
+    "Caller",
+    "Destination",
+    "user",
+    "Duration (s)",
+    "Needs follow-up",
+    "Reason",
+    "Link",
+    "Status",
+]
+
+
+def format_start_for_display(value: object) -> str:
+    """Return a compact local-readable timestamp without timezone suffix."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, pd.Timestamp):
+        if pd.isna(value):
+            return ""
+        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, _dt.datetime):
+        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+    text = str(value).strip()
+    if not text:
+        return ""
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = _dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        if "T" in text:
+            return text.replace("T", " ", 1)
+        return text
+    return parsed.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def prepare_results_display(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Prepare batch results for user-facing UI/email tables."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    prepared = df.copy()
+    if "Start" in prepared.columns:
+        prepared["Start"] = prepared["Start"].map(format_start_for_display)
+
+    visible_columns = [
+        column
+        for column in BASE_RESULT_DISPLAY_COLUMNS
+        if column in prepared.columns and column != "user"
+    ]
+    if "user" in prepared.columns:
+        insert_at = visible_columns.index("Duration (s)") if "Duration (s)" in visible_columns else len(visible_columns)
+        visible_columns.insert(insert_at, "user")
+
+    extras = [
+        column
+        for column in prepared.columns
+        if column not in visible_columns and column != "UniqueId"
+    ]
+    return prepared.loc[:, visible_columns + extras]
+
+
 def label_row(row: dict) -> str:
     start = row.get("Start") or row.get("start_time") or ""
     src = row.get("CallerId") or row.get("phone_number") or ""

@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 import json
 import tempfile
-from dotenv import load_dotenv
 
-load_dotenv()
+from calls_analyser.env import load_environment
+
+load_environment()
 
 # ---------------------------------------------------------------------------
 # Google Service Account credentials bootstrap.

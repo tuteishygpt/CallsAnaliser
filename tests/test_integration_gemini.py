@@ -11,12 +11,8 @@ Environment:
 from __future__ import annotations
 
 import os
-import sys
-import io
 import pytest
 from dataclasses import dataclass
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 MODEL = "models/gemini-2.5-flash-lite"
 PROMPT = "Апішы што ты чуеш на гэтым аўдыязапісе. Адкажы 2-3 сказамі."
@@ -40,9 +36,9 @@ AUDIO_FILES = [
 ]
 
 needs_creds = pytest.mark.skipif(
-    not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    and not os.environ.get("GOOGLE_API_KEY"),
-    reason="No GCP credentials configured",
+    os.environ.get("RUN_GEMINI_INTEGRATION") != "1"
+    or not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+    reason="Gemini integration tests require RUN_GEMINI_INTEGRATION=1 and GOOGLE_APPLICATION_CREDENTIALS",
 )
 
 needs_gcs = pytest.mark.skipif(

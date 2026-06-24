@@ -58,12 +58,15 @@ class UIHandlers:
 
     @staticmethod
     def _build_row_base(entry):
+        raw = getattr(entry, "raw", {}) or {}
+        user = raw.get("user")
         return {
             "Start": entry.started_at.isoformat() if entry.started_at else "",
             "Caller": entry.caller_id or "",
             "Destination": entry.destination or "",
             "Duration (s)": entry.duration_seconds,
             "UniqueId": entry.unique_id,
+            **({"user": user} if user not in (None, "") else {}),
         }
 
     def _fill_row_with_text(self, row_data, entry, tenant, text):
@@ -397,11 +400,13 @@ class UIHandlers:
             return pd.DataFrame()
 
         if filter_option == "Needs follow-up":
-            return full_df[full_df["Needs follow-up"] == "Yes"]
+            filtered = full_df[full_df["Needs follow-up"] == "Yes"]
         elif filter_option == "No follow-up":
-            return full_df[full_df["Needs follow-up"] == "No"]
-        
-        return full_df
+            filtered = full_df[full_df["Needs follow-up"] == "No"]
+        else:
+            filtered = full_df
+
+        return utils.prepare_results_display(filtered)
 
     def mass_analyze_custom(
         self,
@@ -439,6 +444,7 @@ class UIHandlers:
     ):
         empty_df = pd.DataFrame()
         hidden_df_update = gr.update(value=empty_df, visible=False)
+        empty_state = pd.DataFrame()
         hidden_file = gr.update(value=None, visible=False)
         hidden_filter = gr.update(visible=False)
         visible_filter = gr.update(visible=True)

@@ -8,14 +8,15 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 from calls_analyser.ports.mail import MailMessage, MailPort
+from calls_analyser.ui.utils import prepare_results_display
 
 
 REPORT_COLUMNS = [
     "Start",
     "Caller",
     "Destination",
+    "user",
     "Duration (s)",
-    "UniqueId",
     "Needs follow-up",
     "Reason",
     "Link",
@@ -43,7 +44,7 @@ class EmailReportService:
         if results is None or results.empty:
             raise ValueError("No batch results to send.")
 
-        full_results = results.reindex(columns=REPORT_COLUMNS, fill_value="")
+        full_results = self._prepare_report_results(results)
         visible_results = self._filter_results(full_results, filter_option)
         safe_tenant = re.sub(r"[^A-Za-z0-9_.-]+", "-", tenant_id).strip("-") or "tenant"
         safe_date = re.sub(r"[^0-9-]+", "-", report_date).strip("-") or "report"
@@ -65,6 +66,13 @@ class EmailReportService:
         self._mail_port.send(message)
 
     @staticmethod
+    def _prepare_report_results(results: pd.DataFrame) -> pd.DataFrame:
+        columns = [column for column in REPORT_COLUMNS if column in results.columns]
+        report = prepare_results_display(results)
+        extras = [column for column in report.columns if column not in columns]
+        return report.reindex(columns=columns + extras, fill_value="")
+
+    @staticmethod
     def _filter_results(results: pd.DataFrame, filter_option: str) -> pd.DataFrame:
         if filter_option == "Needs follow-up":
             return results[results["Needs follow-up"] == "Yes"]
@@ -84,20 +92,20 @@ class EmailReportService:
     ) -> str:
         headers = "".join(
             f'<th style="{cls._header_style()}">{escape(column)}</th>'
-            for column in REPORT_COLUMNS
+            for column in results.columns
         )
         rows = "".join(
             "<tr>"
             + "".join(
                 f'<td style="{cls._cell_style()}">{cls._render_cell(column, row[column])}</td>'
-                for column in REPORT_COLUMNS
+                for column in results.columns
             )
             + "</tr>"
             for _, row in results.iterrows()
         )
         if not rows:
             rows = (
-                f'<tr><td colspan="{len(REPORT_COLUMNS)}" style="{cls._cell_style()}">'
+                f'<tr><td colspan="{len(results.columns)}" style="{cls._cell_style()}">'
                 "No rows match the selected filter.</td></tr>"
             )
 

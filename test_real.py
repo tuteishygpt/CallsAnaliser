@@ -3,6 +3,11 @@ import wave
 import struct
 from dotenv import load_dotenv
 
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("manual Gemini batch smoke script", allow_module_level=True)
+
 # Load real environment variables
 load_dotenv()
 

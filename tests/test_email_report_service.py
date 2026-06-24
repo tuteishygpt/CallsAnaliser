@@ -22,6 +22,7 @@ def _results() -> pd.DataFrame:
                 "Destination": "Support",
                 "Duration (s)": 120,
                 "UniqueId": "call-1",
+                "user": "operator-1",
                 "Needs follow-up": "Yes",
                 "Reason": "Call back & clarify",
                 "Link": '<a href="https://example.test/call-1?a=1&amp;b=2" target="_blank">Listen</a>',
@@ -58,13 +59,19 @@ def test_send_filters_html_but_attaches_complete_csv() -> None:
     assert "Calls analysis — lix — 2026-06-22" == message.subject
     assert "call-1" in message.html_body
     assert "call-2" not in message.html_body
+    assert "UniqueId" not in message.html_body
+    assert "2026-06-22 09:00:00" in message.html_body
+    assert "operator-1" in message.html_body
     assert "&lt;Client A&gt;" in message.html_body
     assert "Call back &amp; clarify" in message.html_body
     assert 'href="https://example.test/call-1?a=1&amp;b=2"' in message.html_body
 
     csv_text = message.attachment_content.decode("utf-8-sig")
+    assert "UniqueId" not in csv_text
     assert "call-1" in csv_text
-    assert "call-2" in csv_text
+    assert "call-2" not in csv_text
+    assert "2026-06-22 09:00:00" in csv_text
+    assert "operator-1" in csv_text
     assert message.attachment_filename == "calls-analysis-lix-2026-06-22.csv"
 
 
@@ -97,7 +104,8 @@ def test_send_allows_empty_filtered_html_and_keeps_complete_csv() -> None:
     )
 
     message = mail.messages[0]
-    assert "call-2" in message.html_body
+    assert "Client B" in message.html_body
+    assert "Resolved" in message.html_body
     assert "call-1" not in message.html_body
     assert "call-1" in message.attachment_content.decode("utf-8-sig")
 

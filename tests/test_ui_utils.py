@@ -4,9 +4,10 @@ from __future__ import annotations
 from typing import Optional
 import datetime as _dt
 
+import pandas as pd
 import pytest
 
-from calls_analyser.ui.utils import label_row
+from calls_analyser.ui.utils import label_row, prepare_results_display
 
 
 def _parse_day(day_value) -> _dt.date:
@@ -167,3 +168,27 @@ def test_label_row_supports_vochi_api_v1_fields() -> None:
     assert label.startswith("2026-04-22T10:00:00+03:00 | +375290000000")
     assert "150, 151" in label
     assert label.endswith("(42s)")
+
+
+def test_prepare_results_display_hides_unique_id_formats_start_and_keeps_user() -> None:
+    source = pd.DataFrame(
+        [
+            {
+                "Start": "2026-06-23T17:30:10+00:00",
+                "Caller": "375298708492",
+                "Destination": "user",
+                "Duration (s)": 16,
+                "UniqueId": "7AQCK8FGTC000038",
+                "user": "operator-1",
+                "Needs follow-up": "Yes",
+                "Reason": "Needs callback",
+            }
+        ]
+    )
+
+    display = prepare_results_display(source)
+
+    assert "UniqueId" not in display.columns
+    assert display.iloc[0]["Start"] == "2026-06-23 17:30:10"
+    assert display.iloc[0]["user"] == "operator-1"
+    assert "UniqueId" in source.columns

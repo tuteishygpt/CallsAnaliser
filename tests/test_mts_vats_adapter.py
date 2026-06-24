@@ -46,6 +46,7 @@ def test_list_calls_parses_mts_payload() -> None:
                     "client": "375291111111",
                     "destination": "100",
                     "duration": 64,
+                    "record": "https://193130978.vats.mts.by/crmapi/v1/history/record/abc-1",
                 }
             ]
         )
