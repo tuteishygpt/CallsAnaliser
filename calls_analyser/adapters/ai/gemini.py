@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Optional
 from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult, Language
 from calls_analyser.ports.ai import AIModelPort, AudioSource
+from calls_analyser.services.usage import extract_usage_metadata, usage_metadata_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +134,20 @@ class GeminiAIAdapter(AIModelPort):
                 if not text:
                     raise AIModelError("Model returned no text")
 
+                usage = extract_usage_metadata(
+                    getattr(response, "usage_metadata", None)
+                    or getattr(response, "usageMetadata", None)
+                )
+                metadata = {"lang": lang.value, "tenant": (options or {}).get("tenant_id")}
+                usage_dict = usage_metadata_to_dict(usage)
+                if usage_dict:
+                    metadata["usage_metadata"] = usage_dict
+
                 return AnalysisResult(
                     text=text,
                     model=self._model,
                     provider=self.provider_name,
-                    metadata={"lang": lang.value, "tenant": (options or {}).get("tenant_id")},
+                    metadata=metadata,
                 )
             except Exception as exc:  # pragma: no cover - passthrough in tests via fakes
                 is_retryable = self._is_retryable_error(exc)

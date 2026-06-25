@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from calls_analyser.domain.models import AnalysisResult, Language, RecordingHandle
 from calls_analyser.services.analysis import CacheKey, AnalysisOptions, AnalysisService
 from calls_analyser.services.prompt import PromptService, PromptTemplate
@@ -29,6 +31,32 @@ class FakeAIModel(AIModelPort):
         self.calls += 1
         self.last_prompt = prompt
         return AnalysisResult(text=f"result-{self.calls}", model="fake-model", provider=self.provider_name)
+
+
+class UsageAIModel(FakeAIModel):
+    def analyze(self, audio: AudioSource, prompt: str, lang: Language, options=None) -> AnalysisResult:
+        self.calls += 1
+        return AnalysisResult(
+            text=f"result-{self.calls}",
+            model="fake-model",
+            provider=self.provider_name,
+            metadata={
+                "usage_metadata": {
+                    "promptTokenCount": 10,
+                    "candidatesTokenCount": 5,
+                    "totalTokenCount": 15,
+                    "thoughtsTokenCount": 0,
+                }
+            },
+        )
+
+
+class RecordingUsageTracker:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def record(self, **kwargs) -> None:  # noqa: ANN003
+        self.calls.append(kwargs)
 
 
 PROMPTS = {
@@ -79,3 +107,50 @@ def test_analysis_service_accepts_external_cache() -> None:
     )
     assert expected_key in cache
     assert cache[expected_key].text == "result-1"
+
+
+def test_analysis_service_records_usage_for_uncached_model_call_only() -> None:
+    registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
+    ai = UsageAIModel()
+    registry.register("fake-model", ai)
+    prompt_service = PromptService(PROMPTS)
+    call_log_service = StubCallLogService()
+    usage_tracker = RecordingUsageTracker()
+    service = AnalysisService(
+        call_log_service,
+        registry,
+        prompt_service,
+        cache={},
+        usage_tracker=usage_tracker,
+    )
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
+    entry = SimpleNamespace(unique_id="abc", duration_seconds=42, raw={"user": "agent"})
+    options = AnalysisOptions(
+        model_key="fake-model",
+        prompt_key="simple",
+        custom_prompt="custom",
+        mode="ui_mass",
+        call_entry=entry,
+    )
+
+    service.analyze_call("abc", tenant, Language.ENGLISH, options)
+    service.analyze_call("abc", tenant, Language.ENGLISH, options)
+
+    assert len(usage_tracker.calls) == 1
+    call = usage_tracker.calls[0]
+    assert call["entry"] is entry
+    assert call["tenant"] is tenant
+    assert call["prompt_key"] == "simple"
+    assert call["custom_fragment"] == "custom"
+    assert call["provider_name"] == "fake"
+    assert call["model_key"] == "fake-model"
+    assert call["mode"] == "ui_mass"
+    assert call["usage"].total_token_count == 15
+    assert call["cache_key"] == (
+        "tenant",
+        "abc",
+        "simple",
+        "fake",
+        "fake-model",
+        "custom",
+    )

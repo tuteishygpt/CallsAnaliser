@@ -15,6 +15,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
     from calls_analyser.adapters.storage.supabase_storage import SupabaseCache
+    from calls_analyser.adapters.storage.supabase_usage import SupabaseUsageTracker
     from calls_analyser.adapters.telephony.mts_vats import MtsVatsTelephonyAdapter
     from calls_analyser.adapters.telephony.vochi import VochiTelephonyAdapter
     from calls_analyser.domain.exceptions import CallsAnalyserError
@@ -34,6 +35,7 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     EnvSecretsAdapter = None  # type: ignore
     LocalStorageAdapter = None  # type: ignore
     SupabaseCache = None  # type: ignore
+    SupabaseUsageTracker = None  # type: ignore
     MtsVatsTelephonyAdapter = None  # type: ignore
     VochiTelephonyAdapter = None  # type: ignore
     CallsAnalyserError = Exception  # type: ignore
@@ -59,6 +61,7 @@ class AppDependencies:
     tenant_service: Any
     call_log_service: Any
     analysis_service: Any
+    usage_tracker: Any
     email_report_service: Any
     model_options: List[Tuple[str, str]]
     model_choices: List[Tuple[str, str]]
@@ -187,6 +190,7 @@ def build_dependencies() -> AppDependencies:
             tenant_service=None,
             call_log_service=None,
             analysis_service=None,
+            usage_tracker=None,
             email_report_service=None,
             model_options=model_options,
             model_choices=model_choices,
@@ -216,11 +220,19 @@ def build_dependencies() -> AppDependencies:
 
     if supabase_url and supabase_key:
         cache = SupabaseCache(supabase_url, supabase_key)
+        usage_tracker = SupabaseUsageTracker(supabase_url, supabase_key)
     else:
         cache_path = os.path.join(os.getcwd(), ".cache", "analysis_cache.json")
         cache = FileBackedCache(cache_path)
+        usage_tracker = None
 
-    analysis_service = AnalysisService(call_log_service, ai_registry, prompt_service, cache=cache)
+    analysis_service = AnalysisService(
+        call_log_service,
+        ai_registry,
+        prompt_service,
+        cache=cache,
+        usage_tracker=usage_tracker,
+    )
     email_report_service = _build_email_report_service()
 
     model_options = _build_model_options(ai_registry)
@@ -248,6 +260,7 @@ def build_dependencies() -> AppDependencies:
         tenant_service=tenant_service,
         call_log_service=call_log_service,
         analysis_service=analysis_service,
+        usage_tracker=usage_tracker,
         email_report_service=email_report_service,
         model_options=model_options,
         model_choices=model_choices,

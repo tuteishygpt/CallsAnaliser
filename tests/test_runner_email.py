@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from calls_analyser.domain.models import AnalysisResult
 from calls_analyser.runner import run_batch_process
+from calls_analyser.services.gemini_batch import BatchAnalysisResult
 
 
 class _Registry:
@@ -59,6 +60,14 @@ class _BulkOnlyCache:
 
     def get(self, _key):  # noqa: ANN001
         raise AssertionError("runner should use bulk cache lookup")
+
+
+class _RecordingUsageTracker:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def record(self, **kwargs) -> None:  # noqa: ANN003
+        self.calls.append(kwargs)
 
 
 def test_run_batch_sends_cached_results_by_email() -> None:
@@ -228,3 +237,65 @@ def test_run_batch_skips_email_when_batch_failure_has_no_successes(monkeypatch) 
 
     assert list(results["UniqueId"]) == ["call-1"]
     assert email_service.calls == []
+
+
+def test_run_batch_records_usage_for_processed_vertex_batch_result(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, 0),
+        caller_id="Client",
+        destination="Support",
+        duration_seconds=90,
+        unique_id="call-1",
+        raw={"recording_url": "https://example.test/permanent/call-1", "user": "agent"},
+    )
+    provider = SimpleNamespace(provider_name="gemini")
+    usage_tracker = _RecordingUsageTracker()
+
+    class SuccessfulBatchRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch_results(self, *_args, **_kwargs):
+            return {
+                "call-1": BatchAnalysisResult(
+                    text=json.dumps({"needs_follow_up": False, "reason": ""}),
+                    usage_metadata={
+                        "promptTokenCount": 100,
+                        "candidatesTokenCount": 20,
+                        "totalTokenCount": 120,
+                        "thoughtsTokenCount": 0,
+                    },
+                )
+            }
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", SuccessfulBatchRunner)
+
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(provider),
+        analysis_service=SimpleNamespace(_cache={}),
+        email_report_service=None,
+        usage_tracker=usage_tracker,
+    )
+
+    run_batch_process(deps, day, None, None, "", "lix")
+
+    assert len(usage_tracker.calls) == 1
+    call = usage_tracker.calls[0]
+    assert call["entry"] is entry
+    assert call["tenant"] is tenant
+    assert call["mode"] == "scheduler_batch"
+    assert call["usage"].total_token_count == 120

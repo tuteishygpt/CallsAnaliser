@@ -53,6 +53,14 @@ class BatchTask:
     mime_type: str
 
 
+@dataclass(frozen=True)
+class BatchAnalysisResult:
+    """Text and optional usage metadata returned for one batch item."""
+
+    text: str
+    usage_metadata: dict[str, int] | None = None
+
+
 # ---------------------------------------------------------------------------
 # Legacy GeminiBatchRunner (sequential, one-by-one generate_content calls).
 # Commented out — replaced by VertexBatchRunner which uses the real Batch API.
@@ -154,11 +162,31 @@ class VertexBatchRunner:
         max_attempts: int = 2,
     ) -> Dict[str, str]:
         """Upload to GCS, submit batch job(s), poll, return results."""
+        results = self.run_batch_results(
+            tasks,
+            prompt_text,
+            chunk_size=chunk_size,
+            max_attempts=max_attempts,
+        )
+        return {
+            key: result.text if isinstance(result, BatchAnalysisResult) else str(result)
+            for key, result in results.items()
+        }
+
+    def run_batch_results(
+        self,
+        tasks: Iterable[BatchTask],
+        prompt_text: str,
+        *,
+        chunk_size: int = 25,
+        max_attempts: int = 2,
+    ) -> Dict[str, BatchAnalysisResult]:
+        """Upload to GCS, submit batch job(s), poll, return text and usage."""
         pending = list(tasks)
         if not pending:
             return {}
 
-        all_results: Dict[str, str] = {}
+        all_results: Dict[str, BatchAnalysisResult] = {}
         attempts_per_chunk = max(1, max_attempts)
 
         for chunk_start in range(0, len(pending), chunk_size):
@@ -168,7 +196,7 @@ class VertexBatchRunner:
             logger.info(
                 "Batch chunk %d/%d (%d tasks)", chunk_num, total_chunks, len(chunk),
             )
-            chunk_results: Dict[str, str] = {}
+            chunk_results: Dict[str, BatchAnalysisResult] = {}
             for attempt in range(1, attempts_per_chunk + 1):
                 try:
                     chunk_results = self._run_single_batch(chunk, prompt_text)
@@ -202,7 +230,7 @@ class VertexBatchRunner:
         self,
         tasks: List[BatchTask],
         prompt_text: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, BatchAnalysisResult]:
         job_id = uuid.uuid4().hex[:12]
         gcs_prefix = f"batch_{job_id}"
 
@@ -347,8 +375,8 @@ class VertexBatchRunner:
         self,
         tasks: List[BatchTask],
         gcs_prefix: str,
-    ) -> Dict[str, str]:
-        results: Dict[str, str] = {}
+    ) -> Dict[str, BatchAnalysisResult]:
+        results: Dict[str, BatchAnalysisResult] = {}
 
         output_prefix = f"{gcs_prefix}/output/"
         blobs = list(self._gcs_bucket.list_blobs(prefix=output_prefix))
@@ -357,7 +385,7 @@ class VertexBatchRunner:
         if not jsonl_blobs:
             logger.warning("No output JSONL files found under %s", output_prefix)
             for task in tasks:
-                results[task.key] = "Error: no output file"
+                results[task.key] = BatchAnalysisResult(text="Error: no output file")
             return results
 
         output_rows: list[dict] = []
@@ -378,16 +406,20 @@ class VertexBatchRunner:
             error = row.get("error")
             if error:
                 if task_key:
-                    results[task_key] = f"Error: {error}"
+                    results[task_key] = BatchAnalysisResult(text=f"Error: {error}")
                 continue
 
             text = self._extract_text_from_response(response)
             if task_key:
-                results[task_key] = text or "Error: no text in response"
+                usage_metadata = self._extract_usage_metadata_from_response(response)
+                results[task_key] = BatchAnalysisResult(
+                    text=text or "Error: no text in response",
+                    usage_metadata=usage_metadata,
+                )
 
         for task in tasks:
             if task.key not in results:
-                results[task.key] = "Error: no response received"
+                results[task.key] = BatchAnalysisResult(text="Error: no response received")
 
         logger.info("Parsed %d results from output JSONL", len(results))
         return results
@@ -403,6 +435,28 @@ class VertexBatchRunner:
                 if text:
                     return text
         return ""
+
+    @staticmethod
+    def _extract_usage_metadata_from_response(response: dict) -> dict[str, int] | None:
+        usage = response.get("usageMetadata") or response.get("usage_metadata")
+        if not isinstance(usage, dict):
+            return None
+        keys = (
+            "promptTokenCount",
+            "candidatesTokenCount",
+            "totalTokenCount",
+            "thoughtsTokenCount",
+        )
+        result: dict[str, int] = {}
+        for key in keys:
+            value = usage.get(key)
+            if value is None:
+                continue
+            try:
+                result[key] = int(value)
+            except (TypeError, ValueError):
+                continue
+        return result or None
 
     # ------------------------------------------------------------------ #
     # Cleanup: delete GCS staging prefix

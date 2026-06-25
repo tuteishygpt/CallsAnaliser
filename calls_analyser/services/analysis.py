@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import MutableMapping, Optional
+from types import SimpleNamespace
+from typing import Any, MutableMapping, Optional
 
 from calls_analyser.domain.models import AnalysisResult, Language
 from calls_analyser.ports.ai import AIModelPort
@@ -10,6 +11,7 @@ from calls_analyser.services.prompt import PromptService
 from calls_analyser.services.registry import ProviderRegistry
 from calls_analyser.services.tenant import TenantConfig
 from calls_analyser.services.call_log import CallLogService
+from calls_analyser.services.usage import extract_usage_metadata
 
 
 @dataclass
@@ -19,6 +21,8 @@ class AnalysisOptions:
     model_key: str
     prompt_key: str
     custom_prompt: Optional[str] = None
+    mode: str = "ui_direct"
+    call_entry: Any = None
 
 
 @dataclass
@@ -41,11 +45,13 @@ class AnalysisService:
         ai_registry: ProviderRegistry[AIModelPort],
         prompt_service: PromptService,
         cache: MutableMapping[CacheKey, AnalysisResult] | None = None,
+        usage_tracker: Any = None,
     ) -> None:
         self._call_log_service = call_log_service
         self._ai_registry = ai_registry
         self._prompt_service = prompt_service
         self._cache: MutableMapping[CacheKey, AnalysisResult] = cache if cache is not None else {}
+        self._usage_tracker = usage_tracker
 
     def analyze_call(
         self,
@@ -78,9 +84,47 @@ class AnalysisService:
         audio_source = FileAudioSource(path=handle.local_uri)
         result = provider.analyze(audio_source, prompt_body, lang, options={"tenant_id": tenant.tenant_id})
         self._cache[cache_key] = result
+        self._record_usage(
+            result=result,
+            options=options,
+            tenant=tenant,
+            unique_id=unique_id,
+            provider_name=provider_name,
+            custom_fragment=custom_fragment,
+            cache_key=cache_key,
+        )
         return result
 
     def clear_cache(self) -> None:
         """Remove cached analysis results."""
 
         self._cache.clear()
+
+    def _record_usage(
+        self,
+        *,
+        result: AnalysisResult,
+        options: AnalysisOptions,
+        tenant: TenantConfig,
+        unique_id: str,
+        provider_name: str,
+        custom_fragment: str,
+        cache_key: CacheKey,
+    ) -> None:
+        if self._usage_tracker is None:
+            return
+        usage = extract_usage_metadata(result.metadata.get("usage_metadata"))
+        if usage is None:
+            return
+        entry = options.call_entry or SimpleNamespace(unique_id=unique_id, raw={})
+        self._usage_tracker.record(
+            entry=entry,
+            tenant=tenant,
+            prompt_key=options.prompt_key,
+            custom_fragment=custom_fragment,
+            provider_name=provider_name,
+            model_key=options.model_key,
+            mode=options.mode,
+            usage=usage,
+            cache_key=cache_key,
+        )

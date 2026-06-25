@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 
 import gradio as gr
 import pandas as pd
@@ -68,6 +69,47 @@ class UIHandlers:
             "UniqueId": entry.unique_id,
             **({"user": user} if user not in (None, "") else {}),
         }
+
+    @staticmethod
+    def _entry_from_row(unique_id: str, row):
+        if row is None:
+            return None
+        raw = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+
+        def first_value(*keys):
+            for key in keys:
+                value = raw.get(key)
+                if value not in (None, ""):
+                    return value
+            return None
+
+        def as_int(value):
+            try:
+                if pd.isna(value):
+                    return None
+            except TypeError:
+                pass
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        started_raw = first_value("Start", "start_time", "start", "started_at")
+        started_at = None
+        if started_raw:
+            try:
+                started_at = pd.to_datetime(started_raw).to_pydatetime()
+            except Exception:
+                started_at = None
+
+        return SimpleNamespace(
+            unique_id=unique_id,
+            started_at=started_at,
+            caller_id=first_value("Caller", "client", "phone_number", "caller_id"),
+            destination=first_value("Destination", "destination"),
+            duration_seconds=as_int(first_value("Duration (s)", "duration_seconds", "duration")),
+            raw=raw,
+        )
 
     @staticmethod
     def _find_batch_original_row(
@@ -583,6 +625,8 @@ class UIHandlers:
                             model_key=self.deps.batch_model_key,
                             prompt_key=self.deps.batch_prompt_key,
                             custom_prompt=prompt_override,
+                            mode="ui_mass",
+                            call_entry=entry,
                         ),
                     )
 
@@ -722,11 +766,18 @@ class UIHandlers:
         """
 
         uid_to_analyze = (current_uid or "").strip()
+        row = None
         if not uid_to_analyze and selected_idx is not None and df is not None and not df.empty:
             try:
-                uid_to_analyze = str(df.iloc[int(selected_idx)].get("UniqueId") or "").strip()
+                row = df.iloc[int(selected_idx)]
+                uid_to_analyze = str(row.get("UniqueId") or "").strip()
             except (ValueError, IndexError):
                 uid_to_analyze = ""
+        elif selected_idx is not None and df is not None and not df.empty:
+            try:
+                row = df.iloc[int(selected_idx)]
+            except (ValueError, IndexError):
+                row = None
 
         if not uid_to_analyze:
             yield "Select a call from the list or batch results first."
@@ -762,6 +813,8 @@ class UIHandlers:
                     model_key=model_pref,
                     prompt_key=template_key,
                     custom_prompt=custom_prompt,
+                    mode="ui_direct",
+                    call_entry=self._entry_from_row(uid_to_analyze, row),
                 ),
             )
 

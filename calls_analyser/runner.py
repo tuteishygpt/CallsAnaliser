@@ -42,6 +42,7 @@ try:
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult
     from calls_analyser.services.analysis import CacheKey
+    from calls_analyser.services.usage import extract_usage_metadata
     # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
     # If run directly from outside the package context without installation
@@ -233,17 +234,34 @@ def run_batch_process(
     logger.info(f"Summary: {len(entries)} total. {cached_count} already cached. {len(tasks)} to process.")
 
     result_map: dict[str, str] = {}
+    usage_by_id: dict[str, object] = {}
     if tasks:
         # Run batch via Vertex AI Batch API
         logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
         runner = VertexBatchRunner(model=deps.batch_model_key)
 
         try:
-            result_map = runner.run_batch(
-                tasks,
-                merged_prompt,
-                chunk_size=deps.batch_params.batch_size,
-            )
+            run_batch_results = getattr(runner, "run_batch_results", None)
+            if callable(run_batch_results):
+                batch_results = run_batch_results(
+                    tasks,
+                    merged_prompt,
+                    chunk_size=deps.batch_params.batch_size,
+                )
+                result_map = {
+                    key: getattr(value, "text", str(value))
+                    for key, value in batch_results.items()
+                }
+                usage_by_id = {
+                    key: getattr(value, "usage_metadata", None)
+                    for key, value in batch_results.items()
+                }
+            else:
+                result_map = runner.run_batch(
+                    tasks,
+                    merged_prompt,
+                    chunk_size=deps.batch_params.batch_size,
+                )
         except Exception as e:
             logger.error(f"Batch execution failed: {e}")
             for task in tasks:
@@ -268,13 +286,32 @@ def run_batch_process(
                 deps.batch_model_key,
                 custom_fragment,
             )
+            usage_metadata = usage_by_id.get(entry.unique_id)
             new_result = AnalysisResult(
                 text=text_result,
                 model=deps.batch_model_key,
                 provider=provider_name,
-                metadata={"batch": True}
+                metadata={
+                    "batch": True,
+                    **({"usage_metadata": usage_metadata} if usage_metadata else {}),
+                },
             )
             deps.analysis_service._cache[cache_key] = new_result
+            usage_tracker = getattr(deps, "usage_tracker", None)
+            if usage_tracker is not None:
+                usage = extract_usage_metadata(usage_metadata)
+                if usage is not None:
+                    usage_tracker.record(
+                        entry=entry,
+                        tenant=tenant,
+                        prompt_key=deps.batch_prompt_key,
+                        custom_fragment=custom_fragment,
+                        provider_name=provider_name,
+                        model_key=deps.batch_model_key,
+                        mode="scheduler_batch",
+                        usage=usage,
+                        cache_key=cache_key,
+                    )
             result_text_by_id[entry.unique_id] = text_result
             success_count += 1
             logger.info(f"Processed {entry.unique_id} successfully.")
