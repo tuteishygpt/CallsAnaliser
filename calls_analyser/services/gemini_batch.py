@@ -99,7 +99,7 @@ class VertexBatchRunner:
         self,
         model: str,
         project: Optional[str] = None,
-        location: str = "us-central1",
+        location: Optional[str] = None,
         bucket: Optional[str] = None,
         poll_interval: float = 30.0,
         poll_timeout: float = 3600.0,
@@ -116,7 +116,7 @@ class VertexBatchRunner:
             "GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3",
         )
         self._location = location or os.environ.get(
-            "GOOGLE_CLOUD_LOCATION", "us-central1",
+            "GOOGLE_CLOUD_LOCATION", "global",
         )
         self._bucket_name = bucket or os.environ.get("GCS_BATCH_BUCKET", "")
         if not self._bucket_name:
@@ -151,6 +151,7 @@ class VertexBatchRunner:
         prompt_text: str,
         *,
         chunk_size: int = 25,
+        max_attempts: int = 2,
     ) -> Dict[str, str]:
         """Upload to GCS, submit batch job(s), poll, return results."""
         pending = list(tasks)
@@ -158,6 +159,7 @@ class VertexBatchRunner:
             return {}
 
         all_results: Dict[str, str] = {}
+        attempts_per_chunk = max(1, max_attempts)
 
         for chunk_start in range(0, len(pending), chunk_size):
             chunk = pending[chunk_start : chunk_start + chunk_size]
@@ -166,7 +168,29 @@ class VertexBatchRunner:
             logger.info(
                 "Batch chunk %d/%d (%d tasks)", chunk_num, total_chunks, len(chunk),
             )
-            chunk_results = self._run_single_batch(chunk, prompt_text)
+            chunk_results: Dict[str, str] = {}
+            for attempt in range(1, attempts_per_chunk + 1):
+                try:
+                    chunk_results = self._run_single_batch(chunk, prompt_text)
+                    break
+                except Exception as exc:
+                    if attempt >= attempts_per_chunk:
+                        logger.error(
+                            "Batch chunk %d/%d failed after %d attempt(s): %s",
+                            chunk_num,
+                            total_chunks,
+                            attempts_per_chunk,
+                            exc,
+                        )
+                        raise
+                    logger.warning(
+                        "Batch chunk %d/%d failed on attempt %d/%d: %s. Restarting batch chunk.",
+                        chunk_num,
+                        total_chunks,
+                        attempt,
+                        attempts_per_chunk,
+                        exc,
+                    )
             all_results.update(chunk_results)
 
         return all_results

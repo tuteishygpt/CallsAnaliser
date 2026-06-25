@@ -27,6 +27,11 @@ class _CallLogService:
         raise AssertionError("Cached result must not download recording")
 
 
+class _PreparingCallLogService(_CallLogService):
+    def ensure_recording(self, unique_id, _tenant):
+        return SimpleNamespace(local_uri=f"{unique_id}.wav")
+
+
 class _TenantService:
     def __init__(self, tenant) -> None:  # noqa: ANN001
         self._tenant = tenant
@@ -176,3 +181,50 @@ def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
     assert cache.requested_keys == cache_keys
     assert list(results["UniqueId"]) == ["call-0", "call-1"]
     assert list(results["Reason"]) == ["call-0", "call-1"]
+
+
+def test_run_batch_skips_email_when_batch_failure_has_no_successes(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, 0),
+        caller_id="Client",
+        destination="Support",
+        duration_seconds=90,
+        unique_id="call-1",
+        raw={"recording_url": "https://example.test/permanent/call-1"},
+    )
+    provider = SimpleNamespace(provider_name="gemini")
+    email_service = _RecordingEmailReportService()
+
+    class FailingBatchRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch(self, *_args, **_kwargs):
+            raise RuntimeError("batch timed out")
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", FailingBatchRunner)
+
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(provider),
+        analysis_service=SimpleNamespace(_cache={}),
+        email_report_service=email_service,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert list(results["UniqueId"]) == ["call-1"]
+    assert email_service.calls == []

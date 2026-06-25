@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import calls_analyser.services.gemini_batch as gemini_batch
 from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner
 
 
@@ -58,6 +59,58 @@ def _runner_for_lifecycle_test(monkeypatch, *, fail_at: str | None = None):
     return runner, cleanup_prefixes
 
 
+def test_vertex_batch_runner_defaults_to_global_location(monkeypatch):
+    captured = {}
+
+    class GenAI:
+        class Client:
+            def __init__(self, **kwargs):
+                captured["client"] = kwargs
+
+    class GCSStorage:
+        class Client:
+            def __init__(self, **kwargs):
+                captured["gcs"] = kwargs
+
+            def bucket(self, name):
+                return SimpleNamespace(name=name)
+
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+    monkeypatch.setenv("GCS_BATCH_BUCKET", "test-bucket")
+    monkeypatch.setattr(gemini_batch, "genai", GenAI)
+    monkeypatch.setattr(gemini_batch, "gcs_storage", GCSStorage)
+
+    VertexBatchRunner(model="models/gemini-test")
+
+    assert captured["client"]["location"] == "global"
+
+
+def test_vertex_batch_runner_uses_location_from_environment(monkeypatch):
+    captured = {}
+
+    class GenAI:
+        class Client:
+            def __init__(self, **kwargs):
+                captured["client"] = kwargs
+
+    class GCSStorage:
+        class Client:
+            def __init__(self, **kwargs):
+                captured["gcs"] = kwargs
+
+            def bucket(self, name):
+                return SimpleNamespace(name=name)
+
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+    monkeypatch.setenv("GCS_BATCH_BUCKET", "test-bucket")
+    monkeypatch.setattr(gemini_batch, "genai", GenAI)
+    monkeypatch.setattr(gemini_batch, "gcs_storage", GCSStorage)
+
+    VertexBatchRunner(model="models/gemini-test")
+
+    assert captured["client"]["location"] == "global"
+
+
 def test_single_batch_cleans_up_after_success(monkeypatch):
     runner, cleanup_prefixes = _runner_for_lifecycle_test(monkeypatch)
 
@@ -69,6 +122,28 @@ def test_single_batch_cleans_up_after_success(monkeypatch):
     assert result == {"call-1": "ok"}
     assert len(cleanup_prefixes) == 1
     assert cleanup_prefixes[0].startswith("batch_")
+
+
+def test_run_batch_restarts_failed_chunk_once(monkeypatch):
+    runner = object.__new__(VertexBatchRunner)
+    attempts = []
+
+    def run_single_batch(tasks, prompt_text):
+        attempts.append((list(tasks), prompt_text))
+        if len(attempts) == 1:
+            raise RuntimeError("timeout")
+        return {"call-1": "ok"}
+
+    monkeypatch.setattr(runner, "_run_single_batch", run_single_batch)
+
+    result = runner.run_batch(
+        [BatchTask(key="call-1", path="call.mp3", mime_type="audio/mpeg")],
+        "prompt",
+        chunk_size=25,
+    )
+
+    assert result == {"call-1": "ok"}
+    assert len(attempts) == 2
 
 
 @pytest.mark.parametrize("fail_at", ["upload", "write", "create", "poll", "read"])

@@ -44,7 +44,7 @@ class GeminiAIAdapter(AIModelPort):
 
         self._api_key = api_key
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3")
-        self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+        self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
         has_adc = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
 

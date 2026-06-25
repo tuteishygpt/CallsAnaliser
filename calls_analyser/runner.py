@@ -299,16 +299,19 @@ def run_batch_process(
 
     email_report_service = getattr(deps, "email_report_service", None)
     if email_report_service is not None:
-        try:
-            email_report_service.send(
-                results_df,
-                filter_option="Needs follow-up",
-                report_date=day.isoformat(),
-                tenant_id=tenant.tenant_id,
-            )
-            logger.info("Email report sent successfully.")
-        except Exception as e:
-            logger.error(f"Email report failed: {e}")
+        if not result_text_by_id:
+            logger.warning("Email report skipped: no successful batch results to send.")
+        else:
+            try:
+                email_report_service.send(
+                    results_df,
+                    filter_option="Needs follow-up",
+                    report_date=day.isoformat(),
+                    tenant_id=tenant.tenant_id,
+                )
+                logger.info("Email report sent successfully.")
+            except Exception as e:
+                logger.error(f"Email report failed: {e}")
     else:
         logger.warning("Email report skipped: BREVO_API_KEY or GOOGLE_app is not configured.")
 
