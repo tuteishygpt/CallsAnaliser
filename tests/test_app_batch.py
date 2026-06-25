@@ -14,6 +14,7 @@ os.environ.setdefault("TENANT_VOCHI_BASE_URL", "https://bot.example/api/v1")
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 
 import app
+from calls_analyser.ui import utils
 
 
 class _StubTenantService:
@@ -205,3 +206,104 @@ def test_send_results_email_uses_selected_filter_and_full_results(monkeypatch) -
         "report_date": "2026-06-22",
         "tenant_id": "lix",
     }
+
+
+def test_batch_row_select_uses_full_results_when_unique_id_is_hidden(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    handle = SimpleNamespace(
+        local_uri="C:/tmp/call-1.mp3",
+        source_uri="https://bot.example/permanent/call-1",
+    )
+    call_log_service = SimpleNamespace(ensure_recording=lambda *_args: handle)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "call_log_service", call_log_service)
+
+    full_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-06-23T18:53:25",
+                "Caller": "+3753335105",
+                "Destination": "150",
+                "Duration (s)": 164,
+                "UniqueId": "call-1",
+                "Needs follow-up": "Yes",
+                "Reason": "Needs callback",
+                "Link": "",
+                "Status": "✅",
+            }
+        ]
+    )
+    displayed_results = utils.prepare_results_display(full_results)
+    assert "UniqueId" not in displayed_results.columns
+
+    result = app.handlers.on_batch_row_select(
+        displayed_results,
+        full_results,
+        "tenant",
+        SimpleNamespace(index=(0, 0)),
+    )
+
+    dropdown_update, selected_uid, uid_markdown, listen_html, audio_uri, status_msg = result
+    assert dropdown_update["value"] == "call-1"
+    assert selected_uid == "call-1"
+    assert "call-1" in uid_markdown
+    assert "https://bot.example/permanent/call-1" in listen_html
+    assert audio_uri == "C:/tmp/call-1.mp3"
+    assert status_msg == "Ready ✅"
+
+
+def test_batch_row_select_matches_filtered_view_after_index_reset(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    handle = SimpleNamespace(
+        local_uri="C:/tmp/call-2.mp3",
+        source_uri="https://bot.example/permanent/call-2",
+    )
+    call_log_service = SimpleNamespace(ensure_recording=lambda *_args: handle)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "call_log_service", call_log_service)
+
+    full_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-06-23T18:00:00",
+                "Caller": "+3751111111",
+                "Destination": "150",
+                "Duration (s)": 10,
+                "UniqueId": "call-1",
+                "Needs follow-up": "No",
+                "Reason": "Resolved",
+                "Link": "",
+                "Status": "✅",
+            },
+            {
+                "Start": "2026-06-23T19:00:00",
+                "Caller": "+3752222222",
+                "Destination": "152",
+                "Duration (s)": 20,
+                "UniqueId": "call-2",
+                "Needs follow-up": "Yes",
+                "Reason": "Needs callback",
+                "Link": "",
+                "Status": "✅",
+            },
+        ]
+    )
+    filtered_view = utils.prepare_results_display(
+        full_results[full_results["Needs follow-up"] == "Yes"]
+    ).reset_index(drop=True)
+
+    result = app.handlers.on_batch_row_select(
+        filtered_view,
+        full_results,
+        "tenant",
+        SimpleNamespace(index=(0, 0)),
+    )
+
+    assert result[1] == "call-2"
+    assert result[4] == "C:/tmp/call-2.mp3"

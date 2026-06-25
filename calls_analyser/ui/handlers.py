@@ -69,6 +69,48 @@ class UIHandlers:
             **({"user": user} if user not in (None, "") else {}),
         }
 
+    @staticmethod
+    def _find_batch_original_row(
+        displayed_df: pd.DataFrame,
+        full_df_state: pd.DataFrame,
+        visual_row_index: int,
+    ):
+        clicked_row = displayed_df.iloc[visual_row_index]
+        uid = str(clicked_row.get("UniqueId", "")).strip()
+        if uid:
+            matches = full_df_state[full_df_state["UniqueId"].astype(str) == uid]
+            return matches.iloc[0] if not matches.empty else None
+
+        prepared_full = utils.prepare_results_display(full_df_state)
+        common_columns = [
+            column
+            for column in displayed_df.columns
+            if column in prepared_full.columns
+        ]
+        if not common_columns:
+            return None
+
+        clicked_values = clicked_row[common_columns].astype(str)
+
+        original_index = clicked_row.name
+        if original_index in full_df_state.index and original_index in prepared_full.index:
+            candidate = prepared_full.loc[original_index]
+            if isinstance(candidate, pd.DataFrame):
+                candidate = candidate.iloc[0]
+            if candidate[common_columns].astype(str).equals(clicked_values):
+                row = full_df_state.loc[original_index]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[0]
+                return row
+
+        for idx, candidate in prepared_full[common_columns].iterrows():
+            if candidate.astype(str).equals(clicked_values):
+                row = full_df_state.loc[idx]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[0]
+                return row
+        return None
+
     def _fill_row_with_text(self, row_data, entry, tenant, text):
         needs, reason = self._parse_follow_up_fields(text)
         # Вызначаем спасылку на запіс у залежнасці ад пастаўшчыка тэлефаніі.
@@ -756,16 +798,17 @@ class UIHandlers:
 
         try:
             visual_row_index = evt.index[0]
-            clicked_row_from_view = displayed_df.iloc[visual_row_index]
-            uid = str(clicked_row_from_view.get("UniqueId", "")).strip()
+            original_row = self._find_batch_original_row(
+                displayed_df,
+                full_df_state,
+                visual_row_index,
+            )
+            if original_row is None:
+                return empty_return
+            row_dict = original_row.to_dict()
+            uid = str(row_dict.get("UniqueId", "")).strip()
             if not uid:
                 return empty_return
-
-            original_row_series = full_df_state[full_df_state["UniqueId"] == uid]
-            if original_row_series.empty:
-                return empty_return
-            original_row = original_row_series.iloc[0]
-            row_dict = original_row.to_dict()
 
             label = (
                 f"{row_dict.get('Start','')} | "
