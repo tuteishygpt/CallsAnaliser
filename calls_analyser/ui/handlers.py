@@ -112,6 +112,17 @@ class UIHandlers:
         )
 
     @staticmethod
+    def _find_row_by_unique_id(df, unique_id: str):
+        if df is None or getattr(df, "empty", True):
+            return None
+        if "UniqueId" not in df.columns:
+            return None
+        matches = df[df["UniqueId"].astype(str) == str(unique_id)]
+        if matches.empty:
+            return None
+        return matches.iloc[0]
+
+    @staticmethod
     def _find_batch_original_row(
         displayed_df: pd.DataFrame,
         full_df_state: pd.DataFrame,
@@ -754,6 +765,7 @@ class UIHandlers:
         self,
         selected_idx,
         df,
+        batch_df,
         template_key,
         custom_prompt,
         lang_code,
@@ -778,6 +790,8 @@ class UIHandlers:
                 row = df.iloc[int(selected_idx)]
             except (ValueError, IndexError):
                 row = None
+        if row is None and uid_to_analyze:
+            row = self._find_row_by_unique_id(batch_df, uid_to_analyze)
 
         if not uid_to_analyze:
             yield "Select a call from the list or batch results first."

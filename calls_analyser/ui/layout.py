@@ -286,6 +286,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             inputs=[
                 row_dd,
                 calls_df,
+                batch_results_state,
                 tpl_dd,
                 custom_prompt_tb,
                 lang_dd,

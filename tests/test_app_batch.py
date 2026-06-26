@@ -307,3 +307,55 @@ def test_batch_row_select_matches_filtered_view_after_index_reset(monkeypatch) -
 
     assert result[1] == "call-2"
     assert result[4] == "C:/tmp/call-2.mp3"
+
+
+def test_direct_analysis_uses_batch_result_row_for_usage_metadata(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    analysis = _StubAnalysisService({"call-1": "analysis"})
+    monkeypatch.setattr(app.handlers.deps, "project_imports_available", True)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "ai_registry", {"fake-model": object()})
+    monkeypatch.setattr(app.handlers.deps, "analysis_service", analysis)
+
+    batch_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-06-25T09:57:17+00:00",
+                "Caller": "+375292873510",
+                "Destination": "150",
+                "Duration (s)": 66,
+                "UniqueId": "call-1",
+                "Needs follow-up": "No",
+                "Reason": "",
+                "Link": "",
+                "Status": "✅",
+            }
+        ]
+    )
+
+    output = list(
+        app.handlers.analyze_bridge(
+            "call-1",
+            pd.DataFrame(),
+            batch_results,
+            "simple",
+            "",
+            app.Language.ENGLISH,
+            "fake-model",
+            "tenant",
+            "call-1",
+        )
+    )
+
+    assert output[-1] == "### Analysis result\n\nanalysis"
+    options = analysis.calls[0][2]
+    assert options.mode == "ui_direct"
+    assert options.call_entry.unique_id == "call-1"
+    assert options.call_entry.started_at.isoformat() == "2026-06-25T09:57:17+00:00"
+    assert options.call_entry.caller_id == "+375292873510"
+    assert options.call_entry.destination == "150"
+    assert options.call_entry.duration_seconds == 66
