@@ -32,8 +32,9 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             "*Filter calls by date, time and type, listen to recordings and run batch AI analysis.*"
         )
 
-        authed = gr.State(False)
+        authed = gr.State(os.environ.get("VOCHI_UI_PASSWORD", "") == "")
         batch_results_state = gr.State(pd.DataFrame())
+        report_details_state = gr.State(pd.DataFrame())
         current_uid_state = gr.State("")
         custom_batch_conditions_state = gr.State(deps.batch_custom_conditions)
 
@@ -170,6 +171,66 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 analyze_btn = gr.Button("🧠 Analyze", variant="primary")
                 analysis_md = gr.Markdown()
 
+            with gr.Tab("Reports"):
+                with gr.Row():
+                    tenant_report_tb = gr.Textbox(
+                        label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
+                    )
+                    report_date_from_tb = gr.Textbox(
+                        label="Date from", placeholder="YYYY-MM-DD", scale=1
+                    )
+                    report_date_to_tb = gr.Textbox(
+                        label="Date to", placeholder="YYYY-MM-DD", scale=1
+                    )
+                    report_mode_dd = gr.Dropdown(
+                        choices=["All", "ui_direct", "ui_mass", "scheduler_batch", "test"],
+                        value="All",
+                        label="Mode",
+                        type="value",
+                        scale=1,
+                    )
+                    report_model_dd = gr.Dropdown(
+                        choices=["All"],
+                        value="All",
+                        label="Model",
+                        type="value",
+                        allow_custom_value=True,
+                        scale=1,
+                    )
+                    report_user_dd = gr.Dropdown(
+                        choices=["All"],
+                        value="All",
+                        label="User/operator",
+                        type="value",
+                        allow_custom_value=True,
+                        scale=1,
+                    )
+
+                with gr.Row():
+                    refresh_report_filters_btn = gr.Button("Refresh filters", scale=0)
+                    load_report_btn = gr.Button("Load report", variant="primary", scale=0)
+                    report_export_btn = gr.Button("Export CSV", scale=0)
+
+                report_summary_md = gr.Markdown()
+                report_status_md = gr.Markdown()
+                report_file = gr.File(label="Usage report CSV", visible=False)
+
+                report_model_mode_df = gr.DataFrame(
+                    value=pd.DataFrame(),
+                    label="By model and mode",
+                    interactive=False,
+                )
+                report_user_df = gr.DataFrame(
+                    value=pd.DataFrame(),
+                    label="By user/operator",
+                    interactive=False,
+                )
+                report_details_df = gr.DataFrame(
+                    value=pd.DataFrame(),
+                    label="Usage details",
+                    interactive=False,
+                )
+
         pwd_btn.click(
             handlers.check_password,
             inputs=[pwd_tb],
@@ -273,6 +334,38 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             handlers.send_results_email,
             inputs=[batch_results_state, filter_radio, date_inp, tenant_tb, authed],
             outputs=[batch_status_md],
+        )
+
+        refresh_report_filters_btn.click(
+            handlers.load_usage_report_filter_choices,
+            inputs=[tenant_report_tb, authed],
+            outputs=[report_model_dd, report_mode_dd, report_user_dd, report_status_md],
+        )
+
+        load_report_btn.click(
+            handlers.load_usage_report,
+            inputs=[
+                tenant_report_tb,
+                report_date_from_tb,
+                report_date_to_tb,
+                report_mode_dd,
+                report_model_dd,
+                report_user_dd,
+                authed,
+            ],
+            outputs=[
+                report_summary_md,
+                report_model_mode_df,
+                report_user_df,
+                report_details_df,
+                report_details_state,
+            ],
+        )
+
+        report_export_btn.click(
+            handlers.export_usage_report,
+            inputs=[report_details_state],
+            outputs=[report_file, report_status_md],
         )
 
         tpl_dd.change(

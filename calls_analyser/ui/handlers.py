@@ -16,6 +16,11 @@ from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult
 from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner, guess_mime_type
+from calls_analyser.services.usage_report import (
+    ALL_VALUE,
+    UsageReportFilters,
+    build_usage_report,
+)
 
 
 class UIHandlers:
@@ -204,6 +209,113 @@ class UIHandlers:
         except Exception:
             return False
         return getattr(provider, "provider_name", "") == "gemini"
+
+    @staticmethod
+    def _empty_report_result(message: str):
+        empty = pd.DataFrame()
+        return message, empty, empty, empty, empty
+
+    @staticmethod
+    def _format_usage_summary(summary: dict[str, object]) -> str:
+        currency = "USD"
+        return (
+            "### Usage summary\n\n"
+            f"- Calls: {summary['total_calls']}\n"
+            f"- Duration: {summary['total_duration_seconds']}s / "
+            f"{summary['total_duration_minutes']} min\n"
+            f"- Tokens: {summary['total_tokens']} total "
+            f"(prompt {summary['prompt_tokens']}, output {summary['output_tokens']})\n"
+            f"- Internal cost: {summary['estimated_cost']} {currency}\n"
+            f"- Client price: {summary['estimated_client_price']} {currency}\n"
+            f"- Margin: {summary['margin']} {currency}"
+        )
+
+    # ----------------------------------------------------------------------------
+    # Usage report handlers
+    # ----------------------------------------------------------------------------
+    def load_usage_report(
+        self,
+        tenant_id,
+        date_from,
+        date_to,
+        mode,
+        model_key,
+        call_user,
+        authed,
+    ):
+        if not authed:
+            return self._empty_report_result("🔐 Enter the password to load usage reports.")
+
+        repository = getattr(self.deps, "usage_report_repository", None)
+        if repository is None:
+            return self._empty_report_result(
+                "Usage reporting is not configured. Set SUPABASE_URL and SUPABASE_KEY."
+            )
+
+        try:
+            filters = UsageReportFilters(
+                tenant_id=(tenant_id or "").strip() or None,
+                date_from=(date_from or "").strip() or None,
+                date_to=(date_to or "").strip() or None,
+                mode=mode or ALL_VALUE,
+                model_key=model_key or ALL_VALUE,
+                call_user=call_user or ALL_VALUE,
+            )
+            report = build_usage_report(repository.list_usage(filters))
+            return (
+                self._format_usage_summary(report.summary),
+                report.by_model_mode,
+                report.by_user,
+                report.details,
+                report.details,
+            )
+        except Exception as exc:
+            return self._empty_report_result(f"Usage report failed: {exc}")
+
+    def load_usage_report_filter_choices(self, tenant_id, authed):
+        if not authed:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                "🔐 Enter the password to refresh report filters.",
+            )
+
+        repository = getattr(self.deps, "usage_report_repository", None)
+        if repository is None:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                "Usage reporting is not configured.",
+            )
+
+        try:
+            values = repository.list_filter_values((tenant_id or "").strip() or None)
+            return (
+                gr.update(choices=values["models"], value=values["models"][0]),
+                gr.update(choices=values["modes"], value=values["modes"][0]),
+                gr.update(choices=values["users"], value=values["users"][0]),
+                "",
+            )
+        except Exception as exc:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                f"Report filter refresh failed: {exc}",
+            )
+
+    @staticmethod
+    def export_usage_report(details_df):
+        if details_df is None or details_df.empty:
+            return gr.update(value=None, visible=False), "❌ No report data to export."
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as tmp:
+            details_df.to_csv(tmp.name, index=False)
+            return gr.update(value=tmp.name, visible=True), "✅ File is ready to save."
 
     def _run_gemini_batch_analysis(self, entries, tenant, prompt_override):
         prompt_text = prompt_override or self.deps.batch_prompt_text or ""
