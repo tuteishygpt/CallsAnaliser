@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import json
 import tempfile
+import datetime
 
 from calls_analyser.env import load_environment
 
@@ -118,66 +119,104 @@ def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value,
     )
 
 
+def _register_scheduler_job_if_available(scheduler, deps, job) -> bool:
+    """Register the background scheduler job when the current config allows it."""
+
+    bp = deps.batch_params
+    tenant_settings_service = getattr(deps, "tenant_settings_service", None)
+
+    if tenant_settings_service is not None:
+        enabled_tenants = tenant_settings_service.list_scheduler_enabled_tenants() or []
+        if not enabled_tenants:
+            print("ℹ️  [Scheduler] No tenants opted in to scheduler. Background jobs disabled.")
+            return False
+    elif not bp.scheduler_enabled:
+        print("ℹ️  [Scheduler] Scheduler is disabled in batch_params.")
+        return False
+
+    hour, minute = 1, 0
+    try:
+        parts = bp.scheduler_cron_time.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except Exception:
+        print("⚠️  [Scheduler] Invalid cron_time format. Using default 01:00.")
+
+    if bp.scheduler_mode == "interval":
+        interval_mins = max(1, bp.scheduler_interval_minutes)
+        print(
+            f"ℹ️  [Scheduler] Mode: INTERVAL (every {interval_mins} mins). "
+            f"Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}"
+        )
+        scheduler.add_job(
+            job,
+            "interval",
+            minutes=interval_mins,
+            next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=10),
+        )
+    else:
+        print(
+            f"ℹ️  [Scheduler] Mode: CRON (at {hour:02d}:{minute:02d}). "
+            f"Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}"
+        )
+        scheduler.add_job(job, "cron", hour=hour, minute=minute)
+
+    scheduler.start()
+    print("ℹ️  [Scheduler] Background scheduler started.")
+    return True
+
+
 # ----------------------------------------------------------------------------
 # Scheduler for automated daily batch (runs on Hugging Face Spaces / Servers)
 # ----------------------------------------------------------------------------
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from calls_analyser import runner as daily_runner
-    import datetime
+    from calls_analyser.services.scheduler import run_scheduled_batches_for_enabled_tenants
 
     def run_scheduled_job():
         """Wrapper to run the batch job for 'yesterday'."""
         print("⏰ [Scheduler] Starting daily batch analysis...")
-        # Calculate yesterday
         target_date = datetime.date.today() - datetime.timedelta(days=1)
-        
-        # Run the batch process using the same dependencies
-        # Note: We create new dependencies inside the job to ensure clean state if needed,
-        # but here reusing 'deps' is also fine if 'deps' is thread-safe.
-        # For safety/updates, we might want to re-build deps or just use the global 'deps'.
-        # Using global 'deps' for now as it holds the loaded secrets/config.
+
+        tenant_settings_service = getattr(deps, "tenant_settings_service", None)
+        if tenant_settings_service is not None:
+            try:
+                summary = run_scheduled_batches_for_enabled_tenants(
+                    tenant_settings_service=tenant_settings_service,
+                    runner=daily_runner.run_batch_process,
+                    deps=deps,
+                    day=target_date,
+                )
+            except Exception as e:
+                print(f"WARNING [Scheduler] Multi-tenant scheduled batch failed: {e}")
+                raise
+
+            print(
+                "[Scheduler] Multi-tenant daily batch finished. "
+                f"Successes: {len(summary.successes)}, failures: {len(summary.failures)}."
+            )
+            for failure in summary.failures:
+                print(
+                    "WARNING [Scheduler] Tenant batch failed "
+                    f"tenant_id={failure.tenant_id} "
+                    f"error_type={failure.exception_type}: {failure.error}"
+                )
+            return summary
+
         bp = deps.batch_params
         daily_runner.run_batch_process(
-            deps, 
-            day=target_date, 
-            time_from_str=bp.filter_time_from, 
-            time_to_str=bp.filter_time_to, 
-            call_type_str=bp.filter_call_type, 
-            tenant_id_arg=None
+            deps,
+            day=target_date,
+            time_from_str=bp.filter_time_from,
+            time_to_str=bp.filter_time_to,
+            call_type_str=bp.filter_call_type,
+            tenant_id_arg=None,
         )
         print("✅ [Scheduler] Daily batch finished.")
 
-    # Create and configure scheduler
     scheduler = BackgroundScheduler()
-    
-    # Read settings from batch_params
-    bp = deps.batch_params
-    
-    # Define update schedule job based on params
-    # We always start the scheduler, but condition valid jobs.
-    if bp.scheduler_enabled:
-        hour, minute = 1, 0
-        try:
-             # expect "HH:MM"
-             parts = bp.scheduler_cron_time.split(":")
-             hour = int(parts[0])
-             minute = int(parts[1])
-        except Exception:
-             print("⚠️  [Scheduler] Invalid cron_time format. Using default 01:00.")
-        
-        if bp.scheduler_mode == "interval":
-            interval_mins = max(1, bp.scheduler_interval_minutes)
-            print(f"ℹ️  [Scheduler] Mode: INTERVAL (every {interval_mins} mins). Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}")
-            scheduler.add_job(run_scheduled_job, "interval", minutes=interval_mins, next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=10)) 
-        else:
-            print(f"ℹ️  [Scheduler] Mode: CRON (at {hour:02d}:{minute:02d}). Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}")
-            scheduler.add_job(run_scheduled_job, "cron", hour=hour, minute=minute)
-            
-        scheduler.start()
-        print("ℹ️  [Scheduler] Background scheduler started.")
-    else:
-         print("ℹ️  [Scheduler] Scheduler is disabled in batch_params.")
+    _register_scheduler_job_if_available(scheduler, deps, run_scheduled_job)
 
 except ImportError as e:
     print(f"⚠️  [Scheduler] Import Error details: {e}")

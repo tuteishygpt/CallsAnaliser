@@ -34,9 +34,10 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
             "tenant_id": key[0],
             "call_unique_id": key[1],
             "prompt_key": key[2],
-            "provider_name": key[3],
-            "model_key": key[4],
-            "custom_fragment": key[5],
+            "prompt_version": key[3],
+            "provider_name": key[4],
+            "model_key": key[5],
+            "custom_fragment": key[6],
         }
 
     def _record_to_result(self, record: dict[str, Any]) -> AnalysisResult:
@@ -54,6 +55,7 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
             record["tenant_id"],
             record["call_unique_id"],
             record["prompt_key"],
+            int(record.get("prompt_version") or 1),
             record["provider_name"],
             record["model_key"],
             record.get("custom_fragment") or "",
@@ -91,18 +93,19 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
             else:
                 pending_keys.append(key)
 
-        groups: dict[tuple[str, str, str, str, str], list[CacheKey]] = defaultdict(list)
+        groups: dict[tuple[str, str, int, str, str, str], list[CacheKey]] = defaultdict(list)
         for key in pending_keys:
-            tenant_id, call_unique_id, prompt_key, provider_name, model_key, custom_fragment = key
-            groups[(tenant_id, prompt_key, provider_name, model_key, custom_fragment)].append(key)
+            tenant_id, call_unique_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment = key
+            groups[(tenant_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment)].append(key)
 
-        for (tenant_id, prompt_key, provider_name, model_key, custom_fragment), group_keys in groups.items():
+        for (tenant_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment), group_keys in groups.items():
             requested_keys = set(group_keys)
             call_unique_ids = [key[1] for key in group_keys]
             response: APIResponse = (
                 self._table.select("*")
                 .eq("tenant_id", tenant_id)
                 .eq("prompt_key", prompt_key)
+                .eq("prompt_version", prompt_version)
                 .eq("provider_name", provider_name)
                 .eq("model_key", model_key)
                 .eq("custom_fragment", custom_fragment)
@@ -130,7 +133,7 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
 
         # Upsert into Supabase
         # on_conflict match the unique columns
-        self._table.upsert(data, on_conflict="tenant_id, call_unique_id, prompt_key, provider_name, model_key, custom_fragment").execute()
+        self._table.upsert(data, on_conflict="tenant_id, call_unique_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment").execute()
         
         # Update local cache
         self._local_cache[key] = value
@@ -146,13 +149,14 @@ class SupabaseCache(MutableMapping[CacheKey, AnalysisResult]):
         # This is expensive and potentially dangerous for large tables.
         # Implementing for interface completeness but should be used with caution.
         # Fetching only keys.
-        response = self._table.select("tenant_id, call_unique_id, prompt_key, provider_name, model_key, custom_fragment").execute()
+        response = self._table.select("tenant_id, call_unique_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment").execute()
         
         for record in response.data:
             yield (
                 record["tenant_id"],
                 record["call_unique_id"],
                 record["prompt_key"],
+                int(record.get("prompt_version") or 1),
                 record["provider_name"],
                 record["model_key"],
                 record["custom_fragment"],

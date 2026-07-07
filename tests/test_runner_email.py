@@ -17,6 +17,16 @@ class _Registry:
         return self._provider
 
 
+class _RecordingRegistry:
+    def __init__(self, providers) -> None:  # noqa: ANN001
+        self._providers = providers
+        self.requested_keys = []
+
+    def get(self, key: str):
+        self.requested_keys.append(key)
+        return self._providers.get(key)
+
+
 class _CallLogService:
     def __init__(self, entries) -> None:  # noqa: ANN001
         self._entries = entries
@@ -39,6 +49,26 @@ class _TenantService:
 
     def resolve(self, _tenant_id=None):
         return self._tenant
+
+
+class _TenantSettingsService:
+    def __init__(self, runtime_settings) -> None:  # noqa: ANN001
+        self._runtime_settings = runtime_settings
+        self.resolved_tenant_ids = []
+
+    def resolve(self, tenant_id: str):
+        self.resolved_tenant_ids.append(tenant_id)
+        return self._runtime_settings
+
+
+class _CapturingCallLogService:
+    def __init__(self, entries=None) -> None:  # noqa: ANN001
+        self._entries = list(entries or [])
+        self.calls = []
+
+    def list_calls(self, day, tenant, **kwargs):  # noqa: ANN001
+        self.calls.append((day, tenant, kwargs))
+        return list(self._entries)
 
 
 class _RecordingEmailReportService:
@@ -70,6 +100,176 @@ class _RecordingUsageTracker:
         self.calls.append(kwargs)
 
 
+class _PromptService:
+    def get_prompt(self, _key: str, tenant_id=None):  # noqa: ANN001
+        return SimpleNamespace(version=1)
+
+
+def test_run_batch_uses_tenant_prompt_body_and_version_for_vertex_batch(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, 0),
+        caller_id="Client",
+        destination="Support",
+        duration_seconds=90,
+        unique_id="call-1",
+        raw={"recording_url": "https://example.test/permanent/call-1"},
+    )
+    provider = SimpleNamespace(provider_name="gemini")
+    cache = {}
+    usage_tracker = _RecordingUsageTracker()
+    captured_prompts = []
+
+    class TenantPromptService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_prompt(self, key: str, tenant_id=None):  # noqa: ANN001
+            self.calls.append((key, tenant_id))
+            return SimpleNamespace(
+                body="tenant-specific batch prompt",
+                version=42,
+            )
+
+    class SuccessfulBatchRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch_results(self, _tasks, prompt, *, chunk_size):  # noqa: ANN001
+            captured_prompts.append(prompt)
+            return {
+                "call-1": BatchAnalysisResult(
+                    text=json.dumps({"needs_follow_up": False, "reason": ""}),
+                    usage_metadata={
+                        "promptTokenCount": 100,
+                        "candidatesTokenCount": 20,
+                        "totalTokenCount": 120,
+                    },
+                )
+            }
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", SuccessfulBatchRunner)
+
+    prompt_service = TenantPromptService()
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="global batch prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(provider),
+        prompt_service=prompt_service,
+        analysis_service=SimpleNamespace(_cache=cache),
+        email_report_service=None,
+        usage_tracker=usage_tracker,
+    )
+
+    run_batch_process(deps, day, None, None, "", "lix")
+
+    expected_cache_key = (
+        "lix",
+        "call-1",
+        "BATCH_PROMPT",
+        42,
+        "gemini",
+        "models/gemini-test",
+        "",
+    )
+    assert prompt_service.calls == [("BATCH_PROMPT", "lix")]
+    assert len(captured_prompts) == 1
+    assert "tenant-specific batch prompt" in captured_prompts[0]
+    assert "global batch prompt" not in captured_prompts[0]
+    assert expected_cache_key in cache
+    assert usage_tracker.calls[0]["cache_key"] == expected_cache_key
+
+
+def test_run_batch_falls_back_to_global_prompt_when_tenant_prompt_body_is_empty(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, 0),
+        caller_id="Client",
+        destination="Support",
+        duration_seconds=90,
+        unique_id="call-1",
+        raw={"recording_url": "https://example.test/permanent/call-1"},
+    )
+    provider = SimpleNamespace(provider_name="gemini")
+    cache = {}
+    captured_prompts = []
+
+    class TenantPromptService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_prompt(self, key: str, tenant_id=None):  # noqa: ANN001
+            self.calls.append((key, tenant_id))
+            return SimpleNamespace(
+                body="   ",
+                version=99,
+            )
+
+    class SuccessfulBatchRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch_results(self, _tasks, prompt, *, chunk_size):  # noqa: ANN001
+            captured_prompts.append(prompt)
+            return {
+                "call-1": BatchAnalysisResult(
+                    text=json.dumps({"needs_follow_up": False, "reason": ""}),
+                    usage_metadata=None,
+                )
+            }
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", SuccessfulBatchRunner)
+
+    prompt_service = TenantPromptService()
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="global batch prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(provider),
+        prompt_service=prompt_service,
+        analysis_service=SimpleNamespace(_cache=cache),
+        email_report_service=None,
+    )
+
+    run_batch_process(deps, day, None, None, "", "lix")
+
+    expected_cache_key = (
+        "lix",
+        "call-1",
+        "BATCH_PROMPT",
+        99,
+        "gemini",
+        "models/gemini-test",
+        "",
+    )
+    assert prompt_service.calls == [("BATCH_PROMPT", "lix")]
+    assert len(captured_prompts) == 1
+    assert "global batch prompt" in captured_prompts[0]
+    assert "   " not in captured_prompts[0]
+    assert expected_cache_key in cache
+
+
 def test_run_batch_sends_cached_results_by_email() -> None:
     day = dt.date(2026, 6, 22)
     tenant = SimpleNamespace(
@@ -90,6 +290,7 @@ def test_run_batch_sends_cached_results_by_email() -> None:
         "lix",
         "call-1",
         "BATCH_PROMPT",
+        1,
         "gemini",
         "models/gemini-test",
         "",
@@ -112,6 +313,7 @@ def test_run_batch_sends_cached_results_by_email() -> None:
         batch_prompt_key="BATCH_PROMPT",
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
+        prompt_service=_PromptService(),
         analysis_service=SimpleNamespace(_cache=cache),
         email_report_service=email_service,
     )
@@ -155,6 +357,7 @@ def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
             "lix",
             entry.unique_id,
             "BATCH_PROMPT",
+            1,
             "gemini",
             "models/gemini-test",
             "",
@@ -181,6 +384,7 @@ def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
         batch_prompt_key="BATCH_PROMPT",
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
+        prompt_service=_PromptService(),
         analysis_service=SimpleNamespace(_cache=cache),
         email_report_service=None,
     )
@@ -229,6 +433,7 @@ def test_run_batch_skips_email_when_batch_failure_has_no_successes(monkeypatch) 
         batch_prompt_key="BATCH_PROMPT",
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
+        prompt_service=_PromptService(),
         analysis_service=SimpleNamespace(_cache={}),
         email_report_service=email_service,
     )
@@ -286,6 +491,7 @@ def test_run_batch_records_usage_for_processed_vertex_batch_result(monkeypatch) 
         batch_prompt_key="BATCH_PROMPT",
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
+        prompt_service=_PromptService(),
         analysis_service=SimpleNamespace(_cache={}),
         email_report_service=None,
         usage_tracker=usage_tracker,
@@ -299,3 +505,169 @@ def test_run_batch_records_usage_for_processed_vertex_batch_result(monkeypatch) 
     assert call["tenant"] is tenant
     assert call["mode"] == "scheduler_batch"
     assert call["usage"].total_token_count == 120
+
+
+def test_run_batch_uses_tenant_runtime_model_and_batch_size_for_processed_result(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, 0),
+        caller_id="Client",
+        destination="Support",
+        duration_seconds=90,
+        unique_id="call-1",
+        raw={"recording_url": "https://example.test/permanent/call-1"},
+    )
+    provider = SimpleNamespace(provider_name="gemini")
+    registry = _RecordingRegistry({"models/gemini-tenant": provider})
+    cache = {}
+    runner_models = []
+    runner_chunk_sizes = []
+
+    class SuccessfulBatchRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            runner_models.append(model)
+
+        def run_batch_results(self, tasks, _prompt, *, chunk_size):  # noqa: ANN001
+            runner_chunk_sizes.append(chunk_size)
+            assert [task.key for task in tasks] == ["call-1"]
+            return {
+                "call-1": BatchAnalysisResult(
+                    text=json.dumps({"needs_follow_up": False, "reason": ""}),
+                    usage_metadata=None,
+                )
+            }
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", SuccessfulBatchRunner)
+
+    runtime_settings = SimpleNamespace(
+        batch_enabled=True,
+        batch_model_key="models/gemini-tenant",
+        batch_language_code="",
+        batch_size=7,
+        scheduler_filters={},
+    )
+    tenant_settings_service = _TenantSettingsService(runtime_settings)
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-default",
+        ai_registry=registry,
+        prompt_service=_PromptService(),
+        analysis_service=SimpleNamespace(_cache=cache),
+        email_report_service=None,
+        tenant_settings_service=tenant_settings_service,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    expected_cache_key = (
+        "lix",
+        "call-1",
+        "BATCH_PROMPT",
+        1,
+        "gemini",
+        "models/gemini-tenant",
+        "",
+    )
+    assert tenant_settings_service.resolved_tenant_ids == ["lix"]
+    assert registry.requested_keys == ["models/gemini-tenant"]
+    assert runner_models == ["models/gemini-tenant"]
+    assert runner_chunk_sizes == [7]
+    assert expected_cache_key in cache
+    assert cache[expected_cache_key].model == "models/gemini-tenant"
+    assert list(results["UniqueId"]) == ["call-1"]
+
+
+def test_run_batch_uses_tenant_scheduler_filters_when_explicit_args_are_empty() -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    call_log_service = _CapturingCallLogService()
+    runtime_settings = SimpleNamespace(
+        batch_enabled=True,
+        batch_model_key="",
+        batch_language_code="",
+        batch_size=25,
+        scheduler_filters={
+            "time_from": "09:30",
+            "time_to": "17:45",
+            "call_type": "Outbound",
+        },
+    )
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=call_log_service,
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
+        prompt_service=_PromptService(),
+        analysis_service=SimpleNamespace(_cache={}),
+        email_report_service=None,
+        tenant_settings_service=_TenantSettingsService(runtime_settings),
+    )
+
+    run_batch_process(deps, day, "", None, "", "lix")
+
+    assert len(call_log_service.calls) == 1
+    _day, _tenant, filters = call_log_service.calls[0]
+    assert filters == {
+        "time_from": dt.time(9, 30),
+        "time_to": dt.time(17, 45),
+        "call_type": 1,
+    }
+
+
+def test_run_batch_skips_processing_when_tenant_settings_disable_batch() -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/recording/{unique_id}",
+    )
+    call_log_service = _CapturingCallLogService()
+    runtime_settings = SimpleNamespace(
+        batch_enabled=False,
+        batch_model_key="models/gemini-tenant",
+        batch_language_code="en",
+        batch_size=7,
+        scheduler_filters={},
+    )
+    tenant_settings_service = _TenantSettingsService(runtime_settings)
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=call_log_service,
+        batch_language=SimpleNamespace(value="en"),
+        batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT",
+        batch_model_key="models/gemini-test",
+        ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
+        prompt_service=_PromptService(),
+        analysis_service=SimpleNamespace(_cache={}),
+        email_report_service=None,
+        tenant_settings_service=tenant_settings_service,
+    )
+
+    result = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert result is None
+    assert tenant_settings_service.resolved_tenant_ids == ["lix"]
+    assert call_log_service.calls == []

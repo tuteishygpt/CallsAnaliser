@@ -33,7 +33,7 @@ class FileAudioSource:
     content: bytes | None = None
 
 
-CacheKey = tuple[str, str, str, str, str, str]
+CacheKey = tuple[str, str, str, int, str, str, str]
 
 
 class AnalysisService:
@@ -65,10 +65,15 @@ class AnalysisService:
         provider = self._ai_registry.get(options.model_key)
         provider_name = getattr(provider, "provider_name", options.model_key)
         custom_fragment = (options.custom_prompt or "").strip()
+        prompt_template = self._prompt_service.get_prompt(
+            options.prompt_key,
+            tenant_id=tenant.tenant_id,
+        )
         cache_key: CacheKey = (
             tenant.tenant_id,
             unique_id,
             options.prompt_key,
+            prompt_template.version,
             provider_name,
             options.model_key,
             custom_fragment,
@@ -78,7 +83,6 @@ class AnalysisService:
 
         handle = self._call_log_service.ensure_recording(unique_id, tenant)
 
-        prompt_template = self._prompt_service.get_prompt(options.prompt_key)
         prompt_body = custom_fragment or prompt_template.body
 
         audio_source = FileAudioSource(path=handle.local_uri)

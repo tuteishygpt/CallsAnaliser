@@ -32,6 +32,26 @@ class FakeTelephony(TelephonyPort):
         return Recording(unique_id=unique_id, content=b"data", source_uri=f"https://example.com/{unique_id}")
 
 
+class TenantAwareFakeTelephony(TelephonyPort):
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    def list_calls(self, day: date, tenant_id: str, time_from=None, time_to=None, call_type=None):
+        return [
+            CallLogEntry(
+                unique_id=f"{tenant_id}-{self.label}",
+                started_at=None,
+                caller_id=None,
+                destination=None,
+                duration_seconds=None,
+                raw={},
+            )
+        ]
+
+    def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
+        return Recording(unique_id=unique_id, content=f"{tenant_id}:{self.label}".encode("utf-8"))
+
+
 def test_ensure_recording_caches_download(tmp_path: Path) -> None:
     storage = LocalStorageAdapter(tmp_path)
     telephony = FakeTelephony()
@@ -47,6 +67,43 @@ def test_ensure_recording_caches_download(tmp_path: Path) -> None:
     assert telephony.recording_calls == 1
     assert handle2.local_uri == handle1.local_uri
     assert handle2.source_uri == "https://api/recording/abc"
+
+
+def test_ensure_recording_stores_files_under_tenant_directory(tmp_path: Path) -> None:
+    storage = LocalStorageAdapter(tmp_path)
+    telephony = FakeTelephony()
+    service = CallLogService(telephony, storage)
+    tenant = TenantConfig(tenant_id="tenant-a", vochi_base_url="https://api")
+
+    handle = service.ensure_recording("abc", tenant)
+
+    assert Path(handle.local_uri) == tmp_path / "tenant-a" / "abc.mp3"
+    assert Path(handle.local_uri).read_bytes() == b"data"
+
+
+def test_call_log_service_resolves_telephony_per_tenant(tmp_path: Path) -> None:
+    storage = LocalStorageAdapter(tmp_path)
+    service = CallLogService(
+        lambda tenant: TenantAwareFakeTelephony(label=tenant.provider),
+        storage,
+    )
+
+    vochi_tenant = TenantConfig(
+        tenant_id="tenant-a",
+        vochi_base_url="https://api-a",
+        provider="vochi",
+    )
+    mts_tenant = TenantConfig(
+        tenant_id="tenant-b",
+        vochi_base_url="https://api-b",
+        provider="mts_vats",
+    )
+
+    vochi_calls = service.list_calls(date(2024, 6, 1), vochi_tenant)
+    mts_calls = service.list_calls(date(2024, 6, 1), mts_tenant)
+
+    assert vochi_calls[0].unique_id == "tenant-a-vochi"
+    assert mts_calls[0].unique_id == "tenant-b-mts_vats"
 
 
 def test_list_calls_returns_entries(tmp_path: Path) -> None:

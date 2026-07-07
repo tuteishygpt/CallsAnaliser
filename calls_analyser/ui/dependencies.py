@@ -15,6 +15,11 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.secrets.env import EnvSecretsAdapter
     from calls_analyser.adapters.storage.local import LocalStorageAdapter
     from calls_analyser.adapters.storage.supabase_storage import SupabaseCache
+    from calls_analyser.adapters.storage.supabase_tenant import (
+        SupabaseAuthRepository,
+        SupabasePromptTemplateRepository,
+        SupabaseTenantSettingsRepository,
+    )
     from calls_analyser.adapters.storage.supabase_usage import SupabaseUsageTracker
     from calls_analyser.adapters.storage.supabase_usage_report import SupabaseUsageReportRepository
     from calls_analyser.adapters.telephony.mts_vats import MtsVatsTelephonyAdapter
@@ -27,6 +32,7 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.services.email_report import EmailReportService
     from calls_analyser.services.prompt import PromptService
     from calls_analyser.services.registry import ProviderRegistry
+    from calls_analyser.services.telephony_factory import default_telephony_provider_factory
     from calls_analyser.services.tenant import TenantService
 except ImportError:  # pragma: no cover - executed when project deps unavailable
     GeminiAIAdapter = None  # type: ignore
@@ -36,6 +42,9 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     EnvSecretsAdapter = None  # type: ignore
     LocalStorageAdapter = None  # type: ignore
     SupabaseCache = None  # type: ignore
+    SupabaseAuthRepository = None  # type: ignore
+    SupabasePromptTemplateRepository = None  # type: ignore
+    SupabaseTenantSettingsRepository = None  # type: ignore
     SupabaseUsageTracker = None  # type: ignore
     SupabaseUsageReportRepository = None  # type: ignore
     MtsVatsTelephonyAdapter = None  # type: ignore
@@ -50,7 +59,21 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     EmailReportService = None  # type: ignore
     PromptService = None  # type: ignore
     ProviderRegistry = Dict  # type: ignore
+    default_telephony_provider_factory = None  # type: ignore
     TenantService = None  # type: ignore
+
+try:
+    from calls_analyser.services.auth import AuthService, InMemoryAuthRepository, hash_password
+    from calls_analyser.services.tenant_settings import (
+        InMemoryTenantSettingsRepository,
+        TenantSettingsService,
+    )
+except ImportError:  # pragma: no cover - service modules are part of the project
+    AuthService = None  # type: ignore
+    InMemoryAuthRepository = None  # type: ignore
+    hash_password = None  # type: ignore
+    InMemoryTenantSettingsRepository = None  # type: ignore
+    TenantSettingsService = None  # type: ignore
 
 
 @dataclass
@@ -77,6 +100,8 @@ class AppDependencies:
     batch_custom_conditions: str
     batch_custom_prompt_template: str
     batch_params: BatchParams
+    auth_service: Any = None
+    tenant_settings_service: Any = None
 
 
 MODEL_PLACEHOLDER_CHOICE = (
@@ -120,27 +145,35 @@ def _build_model_options(ai_registry: ProviderRegistry) -> List[Tuple[str, str]]
     return options
 
 
-def _build_tenant_service(secrets_adapter: EnvSecretsAdapter) -> TenantService:
+def _build_tenant_settings_repository(
+    supabase_url: str | None = None,
+    supabase_key: str | None = None,
+) -> Any:
+    if supabase_url and supabase_key and SupabaseTenantSettingsRepository is not None:
+        try:
+            return SupabaseTenantSettingsRepository(supabase_url, supabase_key)
+        except Exception:
+            pass
+    return None
+
+
+def _build_tenant_service(
+    secrets_adapter: EnvSecretsAdapter,
+    *,
+    tenant_settings_source: Any | None = None,
+) -> TenantService:
     return TenantService(
         secrets_adapter,
         default_tenant=config.DEFAULT_TENANT_ID,
         default_base_url=config.DEFAULT_BASE_URL,
+        tenant_settings_source=tenant_settings_source,
     )
 
 
 def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any) -> CallLogService:
-    config_obj = tenant_service.resolve()
-    if config_obj.provider == "mts_vats":
-        telephony_adapter = MtsVatsTelephonyAdapter(
-            domain=config_obj.mts_domain or config_obj.vochi_base_url,
-            api_key=config_obj.mts_api_key or "",
-        )
-    else:
-        telephony_adapter = VochiTelephonyAdapter(
-            base_url=config_obj.vochi_base_url,
-            api_key=config_obj.vochi_api_key or "",
-        )
-    return CallLogService(telephony_adapter, storage_adapter)
+    del tenant_service
+    factory = default_telephony_provider_factory()
+    return CallLogService(factory.create, storage_adapter)
 
 
 def _build_email_report_service() -> Any:
@@ -166,10 +199,108 @@ def _build_email_report_service() -> Any:
     return None
 
 
+def _build_auth_service(
+    supabase_url: str | None = None,
+    supabase_key: str | None = None,
+) -> Any:
+    if AuthService is None or InMemoryAuthRepository is None or hash_password is None:
+        return None
+
+    if supabase_url and supabase_key and SupabaseAuthRepository is not None:
+        try:
+            return AuthService(SupabaseAuthRepository(supabase_url, supabase_key))
+        except Exception:
+            pass
+
+    password = os.environ.get("VOCHI_UI_PASSWORD") or ""
+    login = (os.environ.get("VOCHI_UI_LOGIN") or "").strip()
+
+    users: list[dict[str, Any]] = []
+    tenants: list[dict[str, Any]] = []
+    access: list[dict[str, Any]] = []
+    if password:
+        login = login or "admin"
+        user_id = f"local-ui-{login}"
+        tenant_id = config.DEFAULT_TENANT_ID
+        users.append(
+            {
+                "id": user_id,
+                "login": login,
+                "password_hash": hash_password(password),
+                "display_name": login,
+                "is_active": True,
+            }
+        )
+        tenants.append(
+            {
+                "id": tenant_id,
+                "display_name": tenant_id,
+                "status": "active",
+            }
+        )
+        access.append(
+            {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "role": "admin",
+            }
+        )
+
+    return AuthService(InMemoryAuthRepository(users=users, tenants=tenants, access=access))
+
+
+def _build_tenant_settings_service(
+    batch_params: BatchParams,
+    supabase_url: str | None = None,
+    supabase_key: str | None = None,
+) -> Any:
+    if TenantSettingsService is None or InMemoryTenantSettingsRepository is None:
+        return None
+
+    repository = _build_tenant_settings_repository(supabase_url, supabase_key)
+    if repository is not None:
+        return TenantSettingsService(
+            repository,
+            batch_params=batch_params,
+            defaults=config,
+        )
+
+    return TenantSettingsService(
+        InMemoryTenantSettingsRepository(settings={}, secrets={}),
+        batch_params=batch_params,
+        defaults=config,
+    )
+
+
+def _build_prompt_service(
+    supabase_url: str | None = None,
+    supabase_key: str | None = None,
+) -> Any:
+    if PromptService is None:
+        return None
+
+    repository = None
+    if supabase_url and supabase_key and SupabasePromptTemplateRepository is not None:
+        try:
+            repository = SupabasePromptTemplateRepository(supabase_url, supabase_key)
+        except Exception:
+            repository = None
+
+    if repository is None:
+        return PromptService(config.PROMPTS)
+
+    try:
+        return PromptService(config.PROMPTS, prompt_repository=repository)
+    except TypeError:
+        return PromptService(config.PROMPTS)
+
+
 def build_dependencies() -> AppDependencies:
     """Prepare wiring for services used by the UI."""
     if not config.PROJECT_IMPORTS_AVAILABLE:
         batch_params = load_batch_params()
+        auth_service = _build_auth_service()
+        tenant_settings_service = _build_tenant_settings_service(batch_params)
         # minimal fallbacks that keep the UI responsive even without deps
         class MockAdapter:
             def get_optional_secret(self, _):  # pragma: no cover - simple stub
@@ -207,20 +338,32 @@ def build_dependencies() -> AppDependencies:
             batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
             batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
             batch_params=batch_params,
+            auth_service=auth_service,
+            tenant_settings_service=tenant_settings_service,
         )
 
     secrets_adapter = EnvSecretsAdapter()
     storage_adapter = LocalStorageAdapter()
-    prompt_service = PromptService(config.PROMPTS)
     ai_registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
+    batch_params = load_batch_params()
+    supabase_url = secrets_adapter.get_optional_secret("SUPABASE_URL")
+    supabase_key = secrets_adapter.get_optional_secret("SUPABASE_KEY")
+    tenant_settings_repository = _build_tenant_settings_repository(supabase_url, supabase_key)
+    prompt_service = _build_prompt_service(supabase_url, supabase_key)
+    auth_service = _build_auth_service(supabase_url, supabase_key)
+    tenant_settings_service = _build_tenant_settings_service(
+        batch_params,
+        supabase_url,
+        supabase_key,
+    )
 
     _register_gemini_models(ai_registry, secrets_adapter)
 
-    tenant_service = _build_tenant_service(secrets_adapter)
+    tenant_service = _build_tenant_service(
+        secrets_adapter,
+        tenant_settings_source=tenant_settings_repository,
+    )
     call_log_service = _build_call_log_service(tenant_service, storage_adapter)
-
-    supabase_url = secrets_adapter.get_optional_secret("SUPABASE_URL")
-    supabase_key = secrets_adapter.get_optional_secret("SUPABASE_KEY")
 
     if supabase_url and supabase_key:
         cache = SupabaseCache(supabase_url, supabase_key)
@@ -255,8 +398,6 @@ def build_dependencies() -> AppDependencies:
     except ValueError:
         batch_language = config.Language.AUTO
 
-    batch_params = load_batch_params()
-
     return AppDependencies(
         project_imports_available=True,
         secrets_adapter=secrets_adapter,
@@ -280,4 +421,6 @@ def build_dependencies() -> AppDependencies:
         batch_custom_conditions=config.BATCH_CUSTOM_CONDITIONS_DEFAULT,
         batch_custom_prompt_template=config.BATCH_CUSTOM_PROMPT_TEMPLATE,
         batch_params=batch_params,
+        auth_service=auth_service,
+        tenant_settings_service=tenant_settings_service,
     )

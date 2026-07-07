@@ -19,6 +19,15 @@ class _FakeReportRepository:
         self.supabase_key = supabase_key
 
 
+class _TenantServiceSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, *args: object, **kwargs: object) -> str:
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return "tenant-service"
+
+
 def _patch_build_dependencies(monkeypatch, secrets: dict[str, str]) -> None:  # noqa: ANN001
     monkeypatch.setattr(dependencies.config, "PROJECT_IMPORTS_AVAILABLE", True)
     monkeypatch.setattr(dependencies, "EnvSecretsAdapter", lambda: _FakeSecretsAdapter(secrets))
@@ -26,7 +35,6 @@ def _patch_build_dependencies(monkeypatch, secrets: dict[str, str]) -> None:  # 
     monkeypatch.setattr(dependencies, "PromptService", lambda prompts: ("prompts", prompts))
     monkeypatch.setattr(dependencies, "ProviderRegistry", lambda: {})
     monkeypatch.setattr(dependencies, "_register_gemini_models", lambda *_args: None)
-    monkeypatch.setattr(dependencies, "_build_tenant_service", lambda *_args: "tenant-service")
     monkeypatch.setattr(dependencies, "_build_call_log_service", lambda *_args: "call-log")
     monkeypatch.setattr(dependencies, "SupabaseCache", lambda url, key: ("cache", url, key))
     monkeypatch.setattr(dependencies, "SupabaseUsageTracker", lambda url, key: ("usage", url, key))
@@ -41,6 +49,8 @@ def _patch_build_dependencies(monkeypatch, secrets: dict[str, str]) -> None:  # 
 def test_build_dependencies_wires_usage_report_repository_when_supabase_configured(
     monkeypatch,
 ) -> None:
+    tenant_service_spy = _TenantServiceSpy()
+    monkeypatch.setattr(dependencies, "_build_tenant_service", tenant_service_spy)
     _patch_build_dependencies(
         monkeypatch,
         {
@@ -54,13 +64,17 @@ def test_build_dependencies_wires_usage_report_repository_when_supabase_configur
     assert isinstance(deps.usage_report_repository, _FakeReportRepository)
     assert deps.usage_report_repository.supabase_url == "https://example.supabase.co"
     assert deps.usage_report_repository.supabase_key == "service-key"
+    assert tenant_service_spy.calls[0]["kwargs"]["tenant_settings_source"] is not None
 
 
 def test_build_dependencies_leaves_usage_report_repository_empty_without_supabase(
     monkeypatch,
 ) -> None:
+    tenant_service_spy = _TenantServiceSpy()
+    monkeypatch.setattr(dependencies, "_build_tenant_service", tenant_service_spy)
     _patch_build_dependencies(monkeypatch, {})
 
     deps = dependencies.build_dependencies()
 
     assert deps.usage_report_repository is None
+    assert tenant_service_spy.calls[0]["kwargs"]["tenant_settings_source"] is None

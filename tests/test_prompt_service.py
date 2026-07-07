@@ -37,6 +37,52 @@ def test_get_prompt_uses_custom_fallback_key() -> None:
     assert template.key == "detailed"
 
 
+def test_get_prompt_uses_tenant_override_before_global_default() -> None:
+    service = PromptService(
+        {
+            "simple": PromptTemplate(key="simple", title="Simple", body="Default"),
+        },
+        tenant_templates={
+            "tenant-a": {
+                "simple": PromptTemplate(
+                    key="simple",
+                    title="Tenant A Simple",
+                    body="Tenant A prompt",
+                    version=3,
+                )
+            }
+        },
+    )
+
+    template = service.get_prompt("simple", tenant_id="tenant-a")
+
+    assert template.title == "Tenant A Simple"
+    assert template.body == "Tenant A prompt"
+    assert template.version == 3
+
+
+def test_get_prompt_falls_back_to_global_template_without_tenant_override() -> None:
+    service = PromptService(
+        {
+            "simple": PromptTemplate(key="simple", title="Simple", body="Default"),
+        },
+        tenant_templates={
+            "tenant-a": {
+                "simple": PromptTemplate(
+                    key="simple",
+                    title="Tenant A Simple",
+                    body="Tenant A prompt",
+                )
+            }
+        },
+    )
+
+    template = service.get_prompt("simple", tenant_id="tenant-b")
+
+    assert template.title == "Simple"
+    assert template.body == "Default"
+
+
 def test_list_templates_returns_copy() -> None:
     service = make_service()
 
@@ -45,4 +91,25 @@ def test_list_templates_returns_copy() -> None:
 
     # Original storage should remain intact
     assert service.get_prompt("simple").key == "simple"
+    assert set(service.list_templates()) == {"simple", "detailed"}
+
+
+def test_list_templates_merges_tenant_overrides_without_mutating_global_templates() -> None:
+    service = PromptService(
+        {
+            "simple": PromptTemplate(key="simple", title="Simple", body="Default"),
+            "detailed": PromptTemplate(key="detailed", title="Detailed", body="More info"),
+        },
+        tenant_templates={
+            "tenant-a": {
+                "simple": PromptTemplate(key="simple", title="Tenant Simple", body="Tenant prompt"),
+            }
+        },
+    )
+
+    tenant_templates = service.list_templates(tenant_id="tenant-a")
+    tenant_templates.pop("detailed")
+
+    assert tenant_templates["simple"].title == "Tenant Simple"
+    assert service.get_prompt("simple").title == "Simple"
     assert set(service.list_templates()) == {"simple", "detailed"}

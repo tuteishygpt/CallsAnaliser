@@ -92,7 +92,7 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
-def _cache_key_json(cache_key: tuple[str, str, str, str, str, str]) -> str:
+def _cache_key_json(cache_key: tuple[object, ...]) -> str:
     return json.dumps(list(cache_key), ensure_ascii=False, separators=(",", ":"))
 
 
@@ -107,7 +107,7 @@ def build_usage_record(
     mode: str,
     usage: UsageMetadata,
     pricing: PricingSnapshot,
-    cache_key: tuple[str, str, str, str, str, str],
+    cache_key: tuple[object, ...],
 ) -> dict[str, Any]:
     """Build the row inserted into ``analysis_usage``."""
     raw = getattr(entry, "raw", {}) or {}

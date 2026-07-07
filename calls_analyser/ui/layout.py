@@ -26,20 +26,31 @@ JS_FIX_LINKS = """
 
 
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
+    auth_mode = handlers.has_auth_users()
+    legacy_password_required = os.environ.get("VOCHI_UI_PASSWORD", "") != ""
+    initial_authed = False if auth_mode else not legacy_password_required
+
     with gr.Blocks(title="Calls Call Logs (Gradio)") as demo:
         gr.Markdown(
             "# Calls→ audio → AI analysis\n"
             "*Filter calls by date, time and type, listen to recordings and run batch AI analysis.*"
         )
 
-        authed = gr.State(os.environ.get("VOCHI_UI_PASSWORD", "") == "")
+        authed = gr.State(initial_authed)
+        auth_session = gr.State({})
         batch_results_state = gr.State(pd.DataFrame())
         report_details_state = gr.State(pd.DataFrame())
         current_uid_state = gr.State("")
         custom_batch_conditions_state = gr.State(deps.batch_custom_conditions)
 
-        with gr.Group(visible=os.environ.get("VOCHI_UI_PASSWORD", "") != "") as pwd_group:
+        with gr.Group(visible=(auth_mode or legacy_password_required)) as pwd_group:
             gr.Markdown("### 🔐 Enter password")
+            login_tb = gr.Textbox(
+                label="Login",
+                placeholder="Login",
+                lines=1,
+                visible=auth_mode,
+            )
             pwd_tb = gr.Textbox(
                 label="Password", type="password", placeholder="••••••••", lines=1
             )
@@ -49,7 +60,19 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             with gr.Tab("Calls"):
                 with gr.Row():
                     tenant_tb = gr.Textbox(
-                        label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
+                        label="Tenant ID",
+                        value=config.DEFAULT_TENANT_ID,
+                        scale=1,
+                        visible=not auth_mode,
+                    )
+                    tenant_dd = gr.Dropdown(
+                        choices=[],
+                        value=None,
+                        label="Tenant",
+                        type="value",
+                        allow_custom_value=False,
+                        scale=1,
+                        visible=auth_mode,
                     )
                     date_inp = gr.Textbox(
                         label="Date", value=utils.yesterday_str(), placeholder="YYYY-MM-DD", scale=1
@@ -174,7 +197,19 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             with gr.Tab("Reports"):
                 with gr.Row():
                     tenant_report_tb = gr.Textbox(
-                        label="Tenant ID", value=config.DEFAULT_TENANT_ID, scale=1
+                        label="Tenant ID",
+                        value=config.DEFAULT_TENANT_ID,
+                        scale=1,
+                        visible=not auth_mode,
+                    )
+                    tenant_report_dd = gr.Dropdown(
+                        choices=[],
+                        value=None,
+                        label="Tenant",
+                        type="value",
+                        allow_custom_value=False,
+                        scale=1,
+                        visible=auth_mode,
                     )
                     report_date_from_tb = gr.Textbox(
                         label="Date from", placeholder="YYYY-MM-DD", scale=1
@@ -231,26 +266,54 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                     interactive=False,
                 )
 
+        tenant_selector = tenant_dd if auth_mode else tenant_tb
+        tenant_report_selector = tenant_report_dd if auth_mode else tenant_report_tb
+
         pwd_btn.click(
             handlers.check_password,
-            inputs=[pwd_tb],
-            outputs=[authed, status_fetch, pwd_group],
+            inputs=[login_tb, pwd_tb],
+            outputs=[
+                authed,
+                auth_session,
+                status_fetch,
+                pwd_group,
+                tenant_dd,
+                tenant_report_dd,
+            ],
         )
 
         filter_btn.click(
             handlers.filter_calls,
-            inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, authed, tenant_tb],
+            inputs=[
+                date_inp,
+                time_from_inp,
+                time_to_inp,
+                call_type_dd,
+                authed,
+                tenant_selector,
+                auth_session,
+            ],
             outputs=[calls_df, batch_results_df, row_dd, status_fetch, pwd_group, batch_filter_row],
         )
 
         batch_btn.click(
             fn=handlers.mass_analyze,
-            inputs=[date_inp, time_from_inp, time_to_inp, call_type_dd, tenant_tb, authed],
-            outputs=[batch_results_df, batch_status_md, batch_file, batch_filter_row],
-        ).then(
-            fn=lambda df: df,
-            inputs=[batch_results_df],
-            outputs=[batch_results_state],
+            inputs=[
+                date_inp,
+                time_from_inp,
+                time_to_inp,
+                call_type_dd,
+                tenant_selector,
+                authed,
+                auth_session,
+            ],
+            outputs=[
+                batch_results_df,
+                batch_results_state,
+                batch_status_md,
+                batch_file,
+                batch_filter_row,
+            ],
         ).then(
             fn=handlers.filter_batch_results,
             inputs=[filter_radio, batch_results_state],
@@ -287,14 +350,17 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 time_from_inp,
                 time_to_inp,
                 call_type_dd,
-                tenant_tb,
+                tenant_selector,
                 authed,
+                auth_session,
             ],
-            outputs=[batch_results_df, batch_status_md, batch_file, batch_filter_row],
-        ).then(
-            fn=lambda df: df,
-            inputs=[batch_results_df],
-            outputs=[batch_results_state],
+            outputs=[
+                batch_results_df,
+                batch_results_state,
+                batch_status_md,
+                batch_file,
+                batch_filter_row,
+            ],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
@@ -304,7 +370,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
 
         batch_results_df.select(
             fn=handlers.on_batch_row_select,
-            inputs=[batch_results_df, batch_results_state, tenant_tb],
+            inputs=[batch_results_df, batch_results_state, tenant_selector, authed, auth_session],
             outputs=[row_dd, current_uid_state, current_uid_md, url_html, audio_out, status_fetch],
         ).then(
             fn=None, js=JS_FIX_LINKS
@@ -318,7 +384,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
 
         play_btn.click(
             handlers.play_audio,
-            inputs=[row_dd, calls_df, tenant_tb],
+            inputs=[row_dd, calls_df, tenant_selector, authed, auth_session],
             outputs=[url_html, audio_out, status_fetch],
         ).then(
             fn=None, js=JS_FIX_LINKS
@@ -332,26 +398,34 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
 
         email_btn.click(
             handlers.send_results_email,
-            inputs=[batch_results_state, filter_radio, date_inp, tenant_tb, authed],
+            inputs=[
+                batch_results_state,
+                filter_radio,
+                date_inp,
+                tenant_selector,
+                authed,
+                auth_session,
+            ],
             outputs=[batch_status_md],
         )
 
         refresh_report_filters_btn.click(
             handlers.load_usage_report_filter_choices,
-            inputs=[tenant_report_tb, authed],
+            inputs=[tenant_report_selector, authed, auth_session],
             outputs=[report_model_dd, report_mode_dd, report_user_dd, report_status_md],
         )
 
         load_report_btn.click(
             handlers.load_usage_report,
             inputs=[
-                tenant_report_tb,
+                tenant_report_selector,
                 report_date_from_tb,
                 report_date_to_tb,
                 report_mode_dd,
                 report_model_dd,
                 report_user_dd,
                 authed,
+                auth_session,
             ],
             outputs=[
                 report_summary_md,
@@ -384,8 +458,10 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 custom_prompt_tb,
                 lang_dd,
                 model_dd,
-                tenant_tb,
+                tenant_selector,
                 current_uid_state,
+                authed,
+                auth_session,
             ],
             outputs=[analysis_md],
             show_progress="full",

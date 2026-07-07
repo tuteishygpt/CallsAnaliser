@@ -23,6 +23,7 @@ class LocalStorageAdapter(StoragePort):
         """Store ``data`` or copy from an existing file into the base directory."""
         uri = self.uri_for(file_name)
         try:
+            Path(uri).parent.mkdir(parents=True, exist_ok=True)
             if isinstance(data, (bytes, bytearray)):
                 with open(uri, "wb") as dest:
                     dest.write(data)
