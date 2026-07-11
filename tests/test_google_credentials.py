@@ -28,7 +28,7 @@ def _encoded_service_account(marker: str = "private-secret-marker") -> str:
     return base64.b64encode(json.dumps(payload).encode()).decode()
 
 
-def test_valid_b64_credentials_are_built_from_info_and_cached(monkeypatch):
+def test_valid_b64_credentials_are_built_with_cloud_platform_scope_and_cached(monkeypatch):
     from calls_analyser import google_credentials
 
     encoded = _encoded_service_account()
@@ -36,8 +36,8 @@ def test_valid_b64_credentials_are_built_from_info_and_cached(monkeypatch):
     calls = []
     credential = object()
 
-    def from_info(info):
-        calls.append(info)
+    def from_info(info, *, scopes=None):
+        calls.append((info, scopes))
         return credential
 
     monkeypatch.setattr(
@@ -48,7 +48,12 @@ def test_valid_b64_credentials_are_built_from_info_and_cached(monkeypatch):
 
     assert google_credentials.load_google_credentials() is credential
     assert google_credentials.load_google_credentials() is credential
-    assert calls == [json.loads(base64.b64decode(encoded))]
+    assert calls == [
+        (
+            json.loads(base64.b64decode(encoded)),
+            ["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    ]
 
 
 def test_malformed_b64_returns_none_without_logging_secret(monkeypatch, caplog):

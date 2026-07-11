@@ -12,6 +12,8 @@ from google.oauth2 import service_account
 
 logger = logging.getLogger(__name__)
 
+_VERTEX_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
 
 @lru_cache(maxsize=1)
 def load_google_credentials() -> Any | None:
@@ -24,7 +26,10 @@ def load_google_credentials() -> Any | None:
         info = json.loads(decoded.decode("utf-8"))
         if not isinstance(info, dict):
             raise ValueError("service-account JSON must be an object")
-        return service_account.Credentials.from_service_account_info(info)
+        return service_account.Credentials.from_service_account_info(
+            info,
+            scopes=_VERTEX_SCOPES,
+        )
     except Exception:
         logger.warning(
             "GOOGLE_SERVICE_ACCOUNT_JSON_B64 is invalid; falling back to other Google credentials"
