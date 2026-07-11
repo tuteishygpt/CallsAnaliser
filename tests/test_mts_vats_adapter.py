@@ -93,3 +93,17 @@ def test_get_recording_downloads_audio_content() -> None:
     assert recording.unique_id == "uid-9"
     assert recording.content == b"audio-bytes"
     assert recording.source_uri.endswith("/history/record/uid-9")
+
+
+def test_get_recording_uses_registered_direct_record_url() -> None:
+    session = FakeSession()
+    session.queue(FakeResponse(content=b"audio-bytes"))
+    adapter = MtsVatsTelephonyAdapter("193130978.vats.mts.by", "key", http_client=session)
+    direct_url = "https://193130978.vats.mts.by/crmapi/v1/history/record/file.mp3"
+
+    adapter.register_record_url("uid-9", direct_url)
+    recording = adapter.get_recording("uid-9", tenant_id="tenant-mts")
+
+    assert recording.content == b"audio-bytes"
+    assert recording.source_uri == direct_url
+    assert session.calls[0][0] == direct_url

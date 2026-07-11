@@ -25,6 +25,14 @@ class MtsVatsTelephonyAdapter(TelephonyPort):
         # when available, while still supporting a conventional fallback path.
         self._record_urls: dict[str, str] = {}
 
+    def register_record_url(self, unique_id: str, url: str) -> None:
+        """Remember a provider-supplied direct recording URL for a call."""
+
+        clean_unique_id = str(unique_id or "").strip()
+        clean_url = str(url or "").strip()
+        if clean_unique_id and clean_url:
+            self._record_urls[clean_unique_id] = clean_url
+
     @staticmethod
     def _normalize_domain(value: str) -> str:
         raw = (value or "").strip()

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import parse_qs, unquote, urlparse
 
 import gradio as gr
 import pandas as pd
@@ -74,6 +76,41 @@ class UIHandlers:
             "UniqueId": entry.unique_id,
             **({"user": user} if user not in (None, "") else {}),
         }
+
+    @staticmethod
+    def _uid_from_row(row) -> str:
+        raw = row.to_dict() if hasattr(row, "to_dict") else dict(row or {})
+        for key in ("UniqueId", "uid", "Uid", "UID", "unique_id", "UniqueID", "id", "Id", "ID"):
+            value = raw.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+
+        link_value = raw.get("Link") or raw.get("recording_url") or raw.get("record")
+        if not link_value:
+            return ""
+        link_text = str(link_value).strip()
+        href_match = re.search(r"""href=["']([^"']+)["']""", link_text)
+        href = href_match.group(1) if href_match else link_text
+        parsed = urlparse(href)
+        query = parse_qs(parsed.query)
+        for key in ("unique_id", "uid", "id"):
+            values = query.get(key)
+            if values and values[0]:
+                return str(values[0]).strip()
+        last_segment = unquote(parsed.path.rstrip("/").rsplit("/", 1)[-1])
+        if last_segment.lower().endswith(".mp3"):
+            last_segment = last_segment[:-4]
+        return last_segment.strip()
+
+    @staticmethod
+    def _recording_url_from_row(row) -> str:
+        raw = row.to_dict() if hasattr(row, "to_dict") else dict(row or {})
+        link_value = raw.get("Link") or raw.get("recording_url") or raw.get("record")
+        if not link_value:
+            return ""
+        link_text = str(link_value).strip()
+        href_match = re.search(r"""href=["']([^"']+)["']""", link_text)
+        return (href_match.group(1) if href_match else link_text).strip()
 
     @staticmethod
     def _entry_from_row(unique_id: str, row):
@@ -154,10 +191,12 @@ class UIHandlers:
         visual_row_index: int,
     ):
         clicked_row = displayed_df.iloc[visual_row_index]
-        uid = str(clicked_row.get("UniqueId", "")).strip()
+        uid = UIHandlers._uid_from_row(clicked_row)
         if uid:
+            if "UniqueId" not in full_df_state.columns:
+                return clicked_row
             matches = full_df_state[full_df_state["UniqueId"].astype(str) == uid]
-            return matches.iloc[0] if not matches.empty else None
+            return matches.iloc[0] if not matches.empty else clicked_row
 
         prepared_full = utils.prepare_results_display(full_df_state)
         common_columns = [
@@ -1285,10 +1324,10 @@ class UIHandlers:
             evt is None
             or displayed_df is None
             or displayed_df.empty
-            or full_df_state is None
-            or full_df_state.empty
         ):
             return empty_return
+        if full_df_state is None:
+            full_df_state = pd.DataFrame()
 
         try:
             visual_row_index = self._visual_row_index_from_select_event(evt)
@@ -1302,7 +1341,7 @@ class UIHandlers:
             if original_row is None:
                 return empty_return
             row_dict = original_row.to_dict()
-            uid = str(row_dict.get("UniqueId", "")).strip()
+            uid = self._uid_from_row(row_dict)
             if not uid:
                 return empty_return
 
@@ -1324,7 +1363,15 @@ class UIHandlers:
                 if not allowed:
                     return dd_update, uid, uid_md_update, denial, None, ""
                 tenant = self.deps.tenant_service.resolve(selected_tenant or None)
-                handle = self.deps.call_log_service.ensure_recording(uid, tenant)
+                recording_url = self._recording_url_from_row(row_dict)
+                if recording_url:
+                    handle = self.deps.call_log_service.ensure_recording(
+                        uid,
+                        tenant,
+                        recording_url,
+                    )
+                else:
+                    handle = self.deps.call_log_service.ensure_recording(uid, tenant)
                 listen_url = handle.source_uri or tenant.recording_url(uid)
                 html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
                 audio_uri = handle.local_uri

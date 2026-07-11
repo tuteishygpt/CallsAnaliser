@@ -382,6 +382,193 @@ def test_batch_row_select_accepts_plain_row_index(monkeypatch) -> None:
     assert result[4] == "C:/tmp/call-2.mp3"
 
 
+def test_batch_row_select_recovers_uid_from_link_when_state_hides_unique_id(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    handle = SimpleNamespace(
+        local_uri="C:/tmp/call-2.mp3",
+        source_uri="https://bot.example/permanent/call-2",
+    )
+    call_log_service = SimpleNamespace(ensure_recording=lambda *_args: handle)
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "call_log_service", call_log_service)
+
+    full_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-07-09T17:37:18",
+                "Caller": "375293249850",
+                "Destination": "user",
+                "user": "muravitskaya_viktoriya",
+                "Duration (s)": 120,
+                "UniqueId": "call-2",
+                "Needs follow-up": "Yes",
+                "Reason": "Needs callback",
+                "Link": '<a href="https://bot.example/recording/call-2" target="_blank">Listen</a>',
+                "Status": "âœ…",
+            }
+        ]
+    )
+    displayed_results = utils.prepare_results_display(full_results)
+    state_without_unique_id = displayed_results.copy()
+    assert "UniqueId" not in state_without_unique_id.columns
+
+    result = app.handlers.on_batch_row_select(
+        displayed_results,
+        state_without_unique_id,
+        "tenant",
+        True,
+        SimpleNamespace(index=(0, 1)),
+    )
+
+    assert result[1] == "call-2"
+    assert result[4] == "C:/tmp/call-2.mp3"
+
+
+def test_batch_row_select_recovers_uid_from_visible_link_when_state_is_empty(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    handle = SimpleNamespace(
+        local_uri="C:/tmp/call-2.mp3",
+        source_uri="https://bot.example/permanent/call-2",
+    )
+    call_log_service = SimpleNamespace(ensure_recording=lambda *_args: handle)
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "call_log_service", call_log_service)
+
+    displayed_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-07-09 17:37:18",
+                "Caller": "375293249850",
+                "Destination": "user",
+                "user": "muravitskaya_viktoriya",
+                "Duration (s)": 120,
+                "Needs follow-up": "Yes",
+                "Reason": "Needs callback",
+                "Link": '<a href="https://bot.example/recording/call-2" target="_blank">Listen</a>',
+                "Status": "âœ…",
+            }
+        ]
+    )
+
+    result = app.handlers.on_batch_row_select(
+        displayed_results,
+        pd.DataFrame(),
+        "tenant",
+        True,
+        SimpleNamespace(index=(0, 1)),
+    )
+
+    assert result[1] == "call-2"
+    assert result[4] == "C:/tmp/call-2.mp3"
+
+
+def test_batch_row_select_strips_mp3_suffix_from_recovered_record_uid(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://mts.example/crmapi/v1/history/record/{unique_id}",
+    )
+    calls = []
+
+    def ensure_recording(unique_id, _tenant, *_args):  # noqa: ANN001
+        calls.append(unique_id)
+        return SimpleNamespace(
+            local_uri=f"C:/tmp/{unique_id}.mp3",
+            source_uri=f"https://mts.example/crmapi/v1/history/record/{unique_id}",
+        )
+
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "call_log_service",
+        SimpleNamespace(ensure_recording=ensure_recording),
+    )
+
+    displayed_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-07-09 17:47:43",
+                "Caller": "375293332636",
+                "Destination": "user",
+                "Duration (s)": 13,
+                "Link": (
+                    '<a href="https://mts.example/crmapi/v1/history/record/'
+                    '375293332636_in_375336809226_2026_07_09-20_47_49_kepn.mp3" '
+                    'target="_blank">Listen</a>'
+                ),
+            }
+        ]
+    )
+
+    result = app.handlers.on_batch_row_select(
+        displayed_results,
+        pd.DataFrame(),
+        "tenant",
+        True,
+        SimpleNamespace(index=(0, 0)),
+    )
+
+    assert calls == ["375293332636_in_375336809226_2026_07_09-20_47_49_kepn"]
+    assert result[1] == "375293332636_in_375336809226_2026_07_09-20_47_49_kepn"
+
+
+def test_batch_row_select_passes_recovered_record_url_to_call_log_service(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://mts.example/crmapi/v1/history/record/{unique_id}",
+    )
+    calls = []
+    record_url = (
+        "https://mts.example/crmapi/v1/history/record/"
+        "375293332636_in_375336809226_2026_07_09-20_47_49_kepn.mp3"
+    )
+
+    def ensure_recording(unique_id, _tenant, recording_url=None):  # noqa: ANN001
+        calls.append((unique_id, recording_url))
+        return SimpleNamespace(local_uri="C:/tmp/call.mp3", source_uri=recording_url)
+
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "call_log_service",
+        SimpleNamespace(ensure_recording=ensure_recording),
+    )
+
+    displayed_results = pd.DataFrame(
+        [
+            {
+                "Start": "2026-07-09 17:47:43",
+                "Caller": "375293332636",
+                "Destination": "user",
+                "Duration (s)": 13,
+                "Link": f'<a href="{record_url}" target="_blank">Listen</a>',
+            }
+        ]
+    )
+
+    result = app.handlers.on_batch_row_select(
+        displayed_results,
+        pd.DataFrame(),
+        "tenant",
+        True,
+        SimpleNamespace(index=(0, 0)),
+    )
+
+    assert calls == [
+        ("375293332636_in_375336809226_2026_07_09-20_47_49_kepn", record_url)
+    ]
+    assert result[4] == "C:/tmp/call.mp3"
+
+
 def test_play_audio_after_batch_uses_current_uid_when_dropdown_value_is_label(monkeypatch) -> None:
     tenant = SimpleNamespace(
         tenant_id="tenant",
