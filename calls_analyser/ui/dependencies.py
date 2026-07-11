@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from . import config
 from calls_analyser.batch_params import BatchParams, load_batch_params
+from calls_analyser.google_credentials import load_google_credentials
 
 try:  # pragma: no cover - optional imports
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
@@ -114,8 +115,10 @@ def _register_gemini_models(registry: ProviderRegistry, secrets_adapter: Any) ->
     api_key = secrets_adapter.get_optional_secret("GOOGLE_API_KEY")
     project = secrets_adapter.get_optional_secret("GOOGLE_CLOUD_PROJECT")
     location = secrets_adapter.get_optional_secret("GOOGLE_CLOUD_LOCATION") or "global"
-    has_adc = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
-    if not api_key and not has_adc:
+    has_google_credentials = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")) or (
+        load_google_credentials() is not None
+    )
+    if not api_key and not has_google_credentials:
         return
     for _title, model in config.MODEL_CANDIDATES:
         try:
@@ -330,7 +333,7 @@ def build_dependencies() -> AppDependencies:
             model_options=model_options,
             model_choices=model_choices,
             model_default=model_default,
-            model_info="Add GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS to enable models",
+            model_info="Add GOOGLE_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON_B64, or GOOGLE_APPLICATION_CREDENTIALS to enable models",
             batch_prompt_key=config.BATCH_PROMPT_KEY,
             batch_prompt_text=config.BATCH_PROMPT_TEXT,
             batch_model_key=config.BATCH_MODEL_KEY or model_default or "",
@@ -390,7 +393,7 @@ def build_dependencies() -> AppDependencies:
     model_info = (
         "Select an AI model for call analysis"
         if model_options
-        else "Add GOOGLE_API_KEY or GOOGLE_APPLICATION_CREDENTIALS to enable models"
+        else "Add GOOGLE_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON_B64, or GOOGLE_APPLICATION_CREDENTIALS to enable models"
     )
 
     try:

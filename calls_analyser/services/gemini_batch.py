@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.google_credentials import load_google_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -142,12 +143,18 @@ class VertexBatchRunner:
         else:
             self._model = model
 
-        self._client = genai.Client(
+        credentials = load_google_credentials()
+        client_options = dict(
             vertexai=True,
             project=self._project,
             location=self._location,
         )
-        self._gcs = gcs_storage.Client(project=self._project)
+        storage_options = {"project": self._project}
+        if credentials is not None:
+            client_options["credentials"] = credentials
+            storage_options["credentials"] = credentials
+        self._client = genai.Client(**client_options)
+        self._gcs = gcs_storage.Client(**storage_options)
         self._gcs_bucket = self._gcs.bucket(self._bucket_name)
 
     # ------------------------------------------------------------------ #

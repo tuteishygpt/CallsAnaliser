@@ -3,51 +3,14 @@ from __future__ import annotations
 
 import os
 import json
-import tempfile
 import datetime
 
 from calls_analyser.env import load_environment
 
 load_environment()
 
-# ---------------------------------------------------------------------------
-# Google Service Account credentials bootstrap.
-#
-# On Hugging Face Spaces (or any environment without a key file on disk),
-# store the full JSON content of the service-account key in the secret
-# ``GOOGLE_SERVICE_ACCOUNT_JSON``.  The block below writes it to a temp
-# file and sets ``GOOGLE_APPLICATION_CREDENTIALS`` so that every Google
-# client library picks it up automatically.
-#
-# Locally you can either:
-#   - set GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json in .env, or
-#   - set GOOGLE_SERVICE_ACCOUNT_JSON with the raw JSON content.
-# ---------------------------------------------------------------------------
-if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-    import base64
-    sa_b64 = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON_B64", "").strip()
-    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-    if sa_b64 and not sa_json:
-        try:
-            sa_json = base64.b64decode(sa_b64).decode("utf-8").strip()
-        except Exception as exc:
-            print(f"WARNING: GOOGLE_SERVICE_ACCOUNT_JSON_B64 decode failed: {exc}")
-    if sa_json:
-        try:
-            json.loads(sa_json)
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False, prefix="gcp_sa_",
-            )
-            tmp.write(sa_json)
-            tmp.close()
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
-            print(f"DEBUG: Wrote service-account credentials to {tmp.name}")
-        except (json.JSONDecodeError, OSError) as exc:
-            print(f"WARNING: GOOGLE_SERVICE_ACCOUNT_JSON is set but invalid: {exc}")
-
 print(f"DEBUG: CWD is {os.getcwd()}")
 print(f"DEBUG: SUPABASE_URL present: {bool(os.environ.get('SUPABASE_URL'))}")
-print(f"DEBUG: GOOGLE_APPLICATION_CREDENTIALS: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '(not set)')}")
 
 from calls_analyser.ui import config as ui_config
 from calls_analyser.ui.dependencies import build_dependencies

@@ -8,27 +8,11 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from typing import Any, List, Optional
 from dotenv import load_dotenv
 import pandas as pd
 
 load_dotenv()
-
-# Bootstrap service-account credentials from env secret (HF Spaces / CI).
-if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-    if sa_json:
-        try:
-            json.loads(sa_json)
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False, prefix="gcp_sa_",
-            )
-            tmp.write(sa_json)
-            tmp.close()
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp.name
-        except (json.JSONDecodeError, OSError):
-            pass
 
 # Setup simple logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
