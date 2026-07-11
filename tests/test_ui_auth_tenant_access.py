@@ -80,6 +80,25 @@ def _auth_service() -> AuthService:
     )
 
 
+def _operator_auth_service() -> AuthService:
+    return AuthService(
+        InMemoryAuthRepository(
+            users=[
+                {
+                    "id": "user-2",
+                    "login": "operator",
+                    "password_hash": hash_password("secret", salt="tests"),
+                    "display_name": "Operator",
+                }
+            ],
+            tenants=[{"id": "tenant-a", "display_name": "Tenant A"}],
+            access=[
+                {"user_id": "user-2", "tenant_id": "tenant-a", "role": "operator"}
+            ],
+        )
+    )
+
+
 def _handlers(  # noqa: ANN001
     *,
     auth_service=None,
@@ -104,7 +123,15 @@ def _handlers(  # noqa: ANN001
 def test_successful_login_returns_allowed_tenant_dropdown_choices() -> None:
     handlers = _handlers(auth_service=_auth_service())
 
-    authed, session, message, group_update, tenant_update, report_tenant_update = (
+    (
+        authed,
+        session,
+        message,
+        group_update,
+        tenant_update,
+        report_tenant_update,
+        report_tab_update,
+    ) = (
         handlers.check_password("agent", "secret")
     )
 
@@ -120,7 +147,9 @@ def test_successful_login_returns_allowed_tenant_dropdown_choices() -> None:
         ("Tenant B (admin)", "tenant-b"),
     ]
     assert tenant_update["value"] is None
-    assert report_tenant_update["choices"] == tenant_update["choices"]
+    assert report_tenant_update["choices"] == [("Tenant B (admin)", "tenant-b")]
+    assert report_tenant_update["value"] == "tenant-b"
+    assert report_tab_update["visible"] is True
     assert "Access granted" in message
     assert group_update["visible"] is False
 
@@ -128,7 +157,15 @@ def test_successful_login_returns_allowed_tenant_dropdown_choices() -> None:
 def test_denied_login_does_not_authenticate() -> None:
     handlers = _handlers(auth_service=_auth_service())
 
-    authed, session, message, group_update, tenant_update, report_tenant_update = (
+    (
+        authed,
+        session,
+        message,
+        group_update,
+        tenant_update,
+        report_tenant_update,
+        report_tab_update,
+    ) = (
         handlers.check_password("agent", "wrong")
     )
 
@@ -138,6 +175,18 @@ def test_denied_login_does_not_authenticate() -> None:
     assert group_update["visible"] is True
     assert tenant_update["choices"] == []
     assert report_tenant_update["choices"] == []
+    assert report_tab_update["visible"] is False
+
+
+def test_login_without_admin_role_hides_reports_tab() -> None:
+    handlers = _handlers(auth_service=_operator_auth_service())
+
+    result = handlers.check_password("operator", "secret")
+
+    assert result[0] is True
+    assert result[4]["choices"] == [("Tenant A (operator)", "tenant-a")]
+    assert result[5]["choices"] == []
+    assert result[6]["visible"] is False
 
 
 def test_authenticated_filter_rejects_unauthorized_tenant_before_service_call() -> None:

@@ -339,6 +339,14 @@ class UIHandlers:
     def _empty_tenant_dropdown_update():
         return gr.update(choices=[], value=None, visible=True)
 
+    @staticmethod
+    def _admin_tenants(allowed_tenants):
+        return [
+            tenant
+            for tenant in allowed_tenants
+            if str(tenant.get("role", "")).strip().casefold() == "admin"
+        ]
+
     def _auth_session_active(self, auth_session) -> bool:
         if not self.has_auth_users():
             return False
@@ -1167,6 +1175,7 @@ class UIHandlers:
                 group_update,
                 gr.update(visible=False),
                 gr.update(visible=False),
+                gr.update(visible=True),
             )
 
         auth_service = getattr(self.deps, "auth_service", None)
@@ -1180,6 +1189,7 @@ class UIHandlers:
                 gr.update(visible=True),
                 empty_update,
                 empty_update,
+                gr.update(visible=False),
             )
             if full_response:
                 return response
@@ -1188,13 +1198,15 @@ class UIHandlers:
         allowed_tenants = auth_service.list_allowed_tenants(user.user_id)
         session = self._auth_session(user, allowed_tenants)
         tenant_update = self._tenant_dropdown_update(session["allowed_tenants"])
+        admin_tenants = self._admin_tenants(session["allowed_tenants"])
         response = (
             True,
             session,
             "Access granted.",
             gr.update(visible=False),
             tenant_update,
-            tenant_update,
+            self._tenant_dropdown_update(admin_tenants),
+            gr.update(visible=bool(admin_tenants)),
         )
         if full_response:
             return response

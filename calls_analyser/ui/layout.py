@@ -194,7 +194,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 analyze_btn = gr.Button("🧠 Analyze", variant="primary")
                 analysis_md = gr.Markdown()
 
-            with gr.Tab("Reports"):
+            with gr.Tab("Reports", visible=not auth_mode) as reports_tab:
                 with gr.Row():
                     tenant_report_tb = gr.Textbox(
                         label="Tenant ID",
@@ -279,6 +279,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 pwd_group,
                 tenant_dd,
                 tenant_report_dd,
+                reports_tab,
             ],
         )
 
