@@ -382,6 +382,34 @@ def test_batch_row_select_accepts_plain_row_index(monkeypatch) -> None:
     assert result[4] == "C:/tmp/call-2.mp3"
 
 
+def test_play_audio_after_batch_uses_current_uid_when_dropdown_value_is_label(monkeypatch) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    handle = SimpleNamespace(
+        local_uri="C:/tmp/call-1.mp3",
+        source_uri="https://bot.example/permanent/call-1",
+    )
+    call_log_service = SimpleNamespace(ensure_recording=lambda *_args: handle)
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "project_imports_available", True)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(app.handlers.deps, "call_log_service", call_log_service)
+
+    html, audio_uri, status = app.handlers.play_audio(
+        "Batch: 2026-07-06 19:24:01 | +375297857324 -> 150 (141s)",
+        pd.DataFrame(),
+        "tenant",
+        True,
+        current_uid="call-1",
+    )
+
+    assert "https://bot.example/permanent/call-1" in html
+    assert audio_uri == "C:/tmp/call-1.mp3"
+    assert status.startswith("Ready")
+
+
 def test_direct_analysis_uses_batch_result_row_for_usage_metadata(monkeypatch) -> None:
     tenant = SimpleNamespace(
         tenant_id="tenant",

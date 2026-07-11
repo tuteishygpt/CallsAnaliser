@@ -685,7 +685,15 @@ class UIHandlers:
                 gr.update(visible=False),
             )
 
-    def play_audio(self, selected_idx, df, tenant_id, authed, auth_session=None):
+    def play_audio(
+        self,
+        selected_idx,
+        df,
+        tenant_id,
+        authed,
+        auth_session=None,
+        current_uid=None,
+    ):
         """Прайграць аўдыё па выбраным радку."""
         if not self.deps.project_imports_available:
             return "Project dependencies are not loaded.", None, ""
@@ -700,15 +708,23 @@ class UIHandlers:
 
         unique_id = None
         row = None
+        current_uid_value = str(current_uid or "").strip()
 
         if selected_idx is not None:
             try:
+                selected_value = str(selected_idx).strip()
                 # Калі карыстальнік перадаў прамы UID радком
-                if not str(selected_idx).isdigit():
-                    unique_id = str(selected_idx)
+                if (
+                    current_uid_value
+                    and not selected_value.isdigit()
+                    and (selected_value.startswith("Batch:") or "|" in selected_value)
+                ):
+                    unique_id = current_uid_value
+                elif not selected_value.isdigit():
+                    unique_id = selected_value
                 # Калі выбар – індэкс радка ў табліцы
                 elif df is not None and not df.empty:
-                    row = df.iloc[int(selected_idx)]
+                    row = df.iloc[int(selected_value)]
                     # Спачатку спрабуем стандартнае поле UniqueId (VoChi, батч-вынікі)
                     value = row.get("UniqueId")
                     # Fallback для іншых API (напрыклад, МТС VATS, дзе ёсць uid)
@@ -720,6 +736,8 @@ class UIHandlers:
                     unique_id = str(value or "").strip()
             except (ValueError, IndexError):
                 return "<em>Invalid selection.</em>", None, ""
+        elif current_uid_value:
+            unique_id = current_uid_value
 
         # Адфільтраваць выпадкі, калі UID фактычна не зададзены
         if not unique_id or str(unique_id).strip().lower() in {"none", "nan"}:

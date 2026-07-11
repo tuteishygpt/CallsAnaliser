@@ -384,7 +384,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
 
         play_btn.click(
             handlers.play_audio,
-            inputs=[row_dd, calls_df, tenant_selector, authed, auth_session],
+            inputs=[row_dd, calls_df, tenant_selector, authed, auth_session, current_uid_state],
             outputs=[url_html, audio_out, status_fetch],
         ).then(
             fn=None, js=JS_FIX_LINKS
