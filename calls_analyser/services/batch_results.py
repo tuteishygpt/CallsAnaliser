@@ -1,35 +1,18 @@
 """Convert call-analysis output into the shared batch result row format."""
 from __future__ import annotations
 
-import json
+from calls_analyser.services.follow_up import FollowUpDecisionParser
 
 
 def parse_follow_up_fields(text: str) -> tuple[str, str]:
     """Extract follow-up decision and reason from supported model formats."""
     text_clean = str(text or "").strip()
-    if text_clean.startswith("```"):
-        lines = text_clean.splitlines()
-        if lines and lines[-1].strip() == "```":
-            lines = lines[1:-1]
-        elif lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        text_clean = "\n".join(lines).strip()
-    try:
-        left, right = text_clean.find("{"), text_clean.rfind("}")
-        if left != -1 and right > left:
-            text_clean = text_clean[left : right + 1]
-        payload = json.loads(text_clean)
+    decision = FollowUpDecisionParser.parse_compatibility(text_clean)
+    if decision is not None:
         return (
-            "Yes" if payload.get("needs_follow_up") else "No",
-            str(payload.get("reason") or ""),
+            "Yes" if decision.needs_follow_up else "No",
+            decision.reason,
         )
-    except Exception:
-        if "Needs follow-up:" in text_clean:
-            parts = text_clean.split("Summary:", 1)
-            return (
-                parts[0].replace("Needs follow-up:", "").strip(),
-                parts[1].strip() if len(parts) > 1 else "",
-            )
     return "", text_clean
 
 
