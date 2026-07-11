@@ -11,3 +11,9 @@ canvas-genius-492412-c3-53a1b90ffc0d.json
 venv/
 .tmp_*.txt
 .seg.txt
+
+# Local workspace files
+.cache/analysis_cache.json
+.claude/settings.local.json
+CLAUDE.md
+backups/
