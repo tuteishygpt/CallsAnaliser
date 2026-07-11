@@ -76,6 +76,23 @@ def test_parse_strict_rejects_arrays_and_prose(text: str) -> None:
     assert FollowUpDecisionParser.parse_strict(text) is None
 
 
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize(
+    "parse",
+    [
+        FollowUpDecisionParser.parse_strict,
+        FollowUpDecisionParser.parse_compatibility,
+    ],
+)
+def test_parsers_reject_nonstandard_json_constants(parse, constant: str) -> None:  # noqa: ANN001
+    text = (
+        '{"needs_follow_up": true, "reason": "Call back", '
+        f'"confidence": {constant}}}'
+    )
+
+    assert parse(text) is None
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [

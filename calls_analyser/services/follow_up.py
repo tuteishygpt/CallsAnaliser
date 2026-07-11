@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import NoReturn
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,8 +28,11 @@ class FollowUpDecisionParser:
         """Return a decision only for a strictly valid JSON object."""
         text_clean = cls._strip_markdown_fence(text)
         try:
-            payload = json.loads(text_clean)
-        except (json.JSONDecodeError, TypeError):
+            payload = json.loads(
+                text_clean,
+                parse_constant=cls._reject_nonstandard_json_constant,
+            )
+        except (TypeError, ValueError):
             return None
 
         if not isinstance(payload, dict):
@@ -61,6 +65,10 @@ class FollowUpDecisionParser:
             needs_follow_up=match.group(1) == "Yes",
             reason=(match.group(2) or "").strip(),
         )
+
+    @staticmethod
+    def _reject_nonstandard_json_constant(value: str) -> NoReturn:
+        raise ValueError(f"Invalid JSON constant: {value}")
 
     @staticmethod
     def _strip_markdown_fence(text: str) -> str:
