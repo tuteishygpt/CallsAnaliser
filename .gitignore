@@ -17,3 +17,4 @@ venv/
 .claude/settings.local.json
 CLAUDE.md
 backups/
+docs/superpowers/plans/2026-06-27-token-usage-reporting.md
