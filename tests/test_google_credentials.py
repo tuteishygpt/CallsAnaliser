@@ -259,6 +259,19 @@ def test_ui_registers_models_with_b64_credentials_only(monkeypatch):
     assert len(registry) == len(dependencies.config.MODEL_CANDIDATES)
 
 
+def test_model_candidates_include_current_gemini_audio_analysis_models():
+    from calls_analyser import config
+
+    model_keys = {model_key for _title, model_key in config.MODEL_CANDIDATES}
+
+    assert {
+        "models/gemini-3.5-flash",
+        "models/gemini-3.1-flash-lite",
+        "models/gemini-3.1-pro-preview",
+        "models/gemini-3-flash-preview",
+    } <= model_keys
+
+
 def test_entrypoints_have_no_credential_tempfile_bootstrap():
     root = Path(__file__).parents[1]
     for relative in ("app.py", "calls_analyser/runner.py"):

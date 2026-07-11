@@ -96,6 +96,10 @@ PROMPTS = {
 # Provider model candidates
 # ---------------------------
 MODEL_CANDIDATES = [
+    ("3.5 flash", "models/gemini-3.5-flash"),
+    ("3.1 flash-lite", "models/gemini-3.1-flash-lite"),
+    ("3.1 pro preview", "models/gemini-3.1-pro-preview"),
+    ("3 flash preview", "models/gemini-3-flash-preview"),
     ("flash", "models/gemini-2.5-flash"),
     ("pro", "models/gemini-2.5-pro"),
     ("flash-lite", "models/gemini-2.5-flash-lite"),
