@@ -87,9 +87,8 @@ class VertexBatchRunner:
     """Submit audio analysis as a Vertex AI *batch* job via GCS.
 
     Required:
-    * ``GOOGLE_APPLICATION_CREDENTIALS`` — path to service-account JSON
-      (or ``GOOGLE_SERVICE_ACCOUNT_JSON`` env var with raw JSON content,
-      which ``app.py`` / ``runner.py`` write to a temp file on startup).
+    * Google credentials via ``GOOGLE_SERVICE_ACCOUNT_JSON_B64`` (decoded
+      entirely in memory) or local ADC via ``GOOGLE_APPLICATION_CREDENTIALS``.
     * ``GCS_BATCH_BUCKET`` — GCS bucket name for staging audio and JSONL.
     * ``GOOGLE_CLOUD_PROJECT`` — GCP project id.
 

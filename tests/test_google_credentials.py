@@ -81,6 +81,64 @@ def test_gemini_api_key_takes_precedence_over_malformed_b64(monkeypatch):
     assert seen == ["api-key"]
 
 
+def test_gemini_api_key_does_not_construct_valid_b64_credentials(monkeypatch):
+    from calls_analyser.adapters.ai import gemini
+
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON_B64", _encoded_service_account())
+    monkeypatch.setattr(
+        gemini,
+        "load_google_credentials",
+        lambda: pytest.fail("service-account credentials must not be loaded for an API key"),
+    )
+
+    gemini.GeminiAIAdapter(
+        api_key="api-key",
+        model="models/gemini-test",
+        client_factory=lambda key: object(),
+    )
+
+
+@pytest.mark.parametrize(
+    "decoded",
+    ["not-json", json.dumps(["not", "an", "object"])],
+)
+def test_decoded_invalid_json_falls_back_with_sanitized_log(
+    monkeypatch, caplog, decoded
+):
+    from calls_analyser import google_credentials
+
+    encoded = base64.b64encode(decoded.encode()).decode()
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON_B64", encoded)
+
+    with caplog.at_level(logging.WARNING):
+        assert google_credentials.load_google_credentials() is None
+
+    assert encoded not in caplog.text
+    assert decoded not in caplog.text
+    assert "Expecting value" not in caplog.text
+
+
+def test_rejected_service_account_info_falls_back_without_exception_leakage(
+    monkeypatch, caplog
+):
+    from calls_analyser import google_credentials
+
+    marker = "private-secret-marker"
+    exception_marker = "credential-library-internal-detail"
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON_B64", _encoded_service_account(marker))
+    monkeypatch.setattr(
+        google_credentials.service_account.Credentials,
+        "from_service_account_info",
+        lambda info: (_ for _ in ()).throw(ValueError(exception_marker)),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert google_credentials.load_google_credentials() is None
+
+    assert marker not in caplog.text
+    assert exception_marker not in caplog.text
+
+
 def test_gemini_default_factory_uses_explicit_b64_credentials(monkeypatch):
     from calls_analyser.adapters.ai import gemini
 
@@ -149,6 +207,33 @@ def test_batch_clients_share_explicit_b64_credentials(monkeypatch):
     assert storage_calls[0]["credentials"] is credential
 
 
+def test_batch_adc_mode_omits_explicit_credentials(monkeypatch):
+    from calls_analyser.services import gemini_batch
+
+    monkeypatch.setattr(gemini_batch, "load_google_credentials", lambda: None)
+    genai_calls = []
+    storage_calls = []
+    monkeypatch.setattr(
+        gemini_batch.genai,
+        "Client",
+        lambda **kwargs: genai_calls.append(kwargs) or object(),
+    )
+
+    class StorageClient:
+        def __init__(self, **kwargs):
+            storage_calls.append(kwargs)
+
+        def bucket(self, name):
+            return name
+
+    monkeypatch.setattr(gemini_batch.gcs_storage, "Client", StorageClient)
+
+    gemini_batch.VertexBatchRunner(model="models/gemini-test", bucket="bucket")
+
+    assert "credentials" not in genai_calls[0]
+    assert "credentials" not in storage_calls[0]
+
+
 def test_ui_registers_models_with_b64_credentials_only(monkeypatch):
     from calls_analyser.ui import dependencies
     from calls_analyser.services.registry import ProviderRegistry
@@ -180,3 +265,11 @@ def test_entrypoints_have_no_credential_tempfile_bootstrap():
         source = (root / relative).read_text(encoding="utf-8")
         assert "GOOGLE_SERVICE_ACCOUNT_JSON_B64" not in source
         assert "tempfile" not in source
+
+
+def test_batch_runner_documentation_describes_in_memory_b64_credentials():
+    from calls_analyser.services.gemini_batch import VertexBatchRunner
+
+    doc = VertexBatchRunner.__doc__ or ""
+    assert "GOOGLE_SERVICE_ACCOUNT_JSON_B64" in doc
+    assert "write to a temp file" not in doc
