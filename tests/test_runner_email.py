@@ -958,3 +958,136 @@ def test_run_batch_shadow_retains_verification_audit_without_changing_final(monk
     assert results.loc[0, "Verification needs follow-up"] == "No"
     assert results.loc[0, "Verification reason"] == "shadow clear"
     assert results.loc[0, "Verification status"] == "shadow_complete"
+
+
+def test_run_batch_logs_missing_tenant_primary_model_and_returns_without_email(caplog) -> None:
+    caplog.set_level("ERROR", logger="daily_batch")
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(tenant_id="lix", provider="vochi", recording_url=lambda _id: "")
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9), caller_id="Client",
+        destination="Support", duration_seconds=1, unique_id="call-1", raw={},
+    )
+    email = _RecordingEmailReportService()
+    settings = SimpleNamespace(
+        batch_enabled=True, batch_model_key="tenant-missing-model",
+        batch_language_code="en", batch_size=7, scheduler_filters={},
+        follow_up_verification_mode="off",
+    )
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        tenant_settings_service=_TenantSettingsService(settings),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="default-model",
+        ai_registry=_RecordingRegistry({}), prompt_service=_PromptService(),
+        analysis_service=_AnalysisServiceFixture({}, _PreparingCallLogService([entry])),
+        email_report_service=email,
+    )
+
+    result = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert result is None
+    assert email.calls == []
+    assert "tenant lix" in caplog.text
+    assert "tenant-missing-model" in caplog.text
+    assert "not found" in caplog.text
+
+
+def test_run_batch_logs_prompt_backend_failure_and_returns_without_email(caplog) -> None:
+    caplog.set_level("ERROR", logger="daily_batch")
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(tenant_id="lix", provider="vochi", recording_url=lambda _id: "")
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9), caller_id="Client",
+        destination="Support", duration_seconds=1, unique_id="call-1", raw={},
+    )
+    email = _RecordingEmailReportService()
+    prompt_service = SimpleNamespace(
+        get_prompt=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("prompt backend unavailable"),
+        ),
+    )
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="primary-model",
+        ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
+        prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture({}, _PreparingCallLogService([entry])),
+        email_report_service=email,
+    )
+
+    result = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert result is None
+    assert email.calls == []
+    assert "tenant lix" in caplog.text
+    assert "prompt backend unavailable" in caplog.text
+
+
+def test_run_batch_logs_terminal_item_failures_without_raw_response(
+    monkeypatch, caplog,
+) -> None:
+    caplog.set_level("WARNING", logger="daily_batch")
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(tenant_id="lix", provider="vochi", recording_url=lambda _id: "")
+    entries = [SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, i), caller_id="Client",
+        destination="Support", duration_seconds=1, unique_id=unique_id, raw={},
+    ) for i, unique_id in enumerate(("prep-id", "vertex-id", "missing-id", "invalid-id"))]
+
+    class CallLog(_CallLogService):
+        def ensure_recording(self, unique_id, _tenant):  # noqa: ANN001
+            if unique_id == "prep-id":
+                raise RuntimeError("recording unavailable")
+            return SimpleNamespace(local_uri=f"{unique_id}.wav")
+
+    class TerminalRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            pass
+
+        def run_batch_results(self, tasks, _prompt, *, chunk_size):  # noqa: ANN001
+            ids = {task.key for task in tasks}
+            results = {}
+            if "vertex-id" in ids:
+                results["vertex-id"] = BatchAnalysisResult(text="Error: provider rejected")
+            if "invalid-id" in ids:
+                results["invalid-id"] = BatchAnalysisResult(
+                    text="SENSITIVE RAW TRANSCRIPT malformed decision",
+                )
+            return results
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", TerminalRunner)
+    call_log = CallLog(entries)
+    email = _RecordingEmailReportService()
+    prompt_service = SimpleNamespace(get_prompt=lambda key, tenant_id=None: SimpleNamespace(
+        key=key, version=1, body="prompt",
+    ))
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant), call_log_service=call_log,
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="prompt",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="primary-model",
+        ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
+        prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture({}, call_log), email_report_service=email,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert len(results) == 4
+    assert email.calls == []
+    for unique_id in ("prep-id", "vertex-id", "missing-id", "invalid-id"):
+        assert unique_id in caplog.text
+    assert "execution_status=error final_status=error" in caplog.text
+    assert "execution_status=missing final_status=error" in caplog.text
+    assert "execution_status=success final_status=invalid" in caplog.text
+    assert "could not parse follow-up decision" in caplog.text
+    assert "SENSITIVE RAW TRANSCRIPT" not in caplog.text

@@ -23,7 +23,10 @@ try:
     from calls_analyser.services.gemini_batch import VertexBatchRunner
     from calls_analyser.services.batch_executors import VertexBatchExecutor
     from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator
-    from calls_analyser.services.batch_results import build_batch_item_row
+    from calls_analyser.services.batch_results import (
+        INVALID_PRIMARY_REASON,
+        build_batch_item_row,
+    )
     from calls_analyser.services.tenant_settings import TenantRuntimeSettings
     # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
@@ -174,6 +177,18 @@ class _SchedulerPromptService:
         )
 
 
+class _PrimaryValidatedRegistry:
+    def __init__(self, registry: Any, model_key: str, provider: Any) -> None:
+        self._registry = registry
+        self._model_key = model_key
+        self._provider = provider
+
+    def get(self, model_key: str) -> Any:
+        if model_key == self._model_key:
+            return self._provider
+        return self._registry.get(model_key)
+
+
 def run_batch_process(
     deps, 
     day: datetime.date,
@@ -248,6 +263,23 @@ def run_batch_process(
     logger.info(f"Found {len(entries)} calls.")
 
     settings = _orchestrator_settings(deps, runtime_settings)
+    try:
+        primary_provider = deps.ai_registry.get(settings.batch_model_key)
+    except Exception as e:
+        logger.error(
+            "Batch configuration error for tenant %s: model %r lookup failed: %s",
+            tenant.tenant_id,
+            settings.batch_model_key,
+            e,
+        )
+        return
+    if primary_provider is None:
+        logger.error(
+            "Batch configuration error for tenant %s: model %r was not found",
+            tenant.tenant_id,
+            settings.batch_model_key,
+        )
+        return
     analysis_service = deps.analysis_service
     executor = VertexBatchExecutor(
         analysis_service,
@@ -257,16 +289,53 @@ def run_batch_process(
     orchestrator = BatchAnalysisOrchestrator(
         executor,
         prompt_service=_SchedulerPromptService(deps),
-        ai_registry=deps.ai_registry,
+        ai_registry=_PrimaryValidatedRegistry(
+            deps.ai_registry,
+            settings.batch_model_key,
+            primary_provider,
+        ),
     )
-    run_result = orchestrator.run_with_settings(
+    try:
+        primary_spec, verification_spec, verification_config_error = (
+            orchestrator.resolve_round_specs(
+                tenant,
+                settings,
+                primary_prompt_key=deps.batch_prompt_key,
+                primary_usage_mode="scheduler_batch",
+                verification_usage_mode="scheduler_batch_verify",
+            )
+        )
+    except Exception as e:
+        logger.error(
+            "Batch configuration error for tenant %s: %s",
+            tenant.tenant_id,
+            e,
+        )
+        return
+    run_result = orchestrator.run(
         entries,
         tenant,
-        settings,
-        primary_prompt_key=deps.batch_prompt_key,
-        primary_usage_mode="scheduler_batch",
-        verification_usage_mode="scheduler_batch_verify",
+        primary_spec,
+        verification_mode=settings.follow_up_verification_mode,
+        verification_spec=verification_spec,
+        verification_config_error=verification_config_error,
     )
+    for item in run_result.items:
+        if item.final_status not in {"error", "invalid"}:
+            continue
+        detail = (
+            INVALID_PRIMARY_REASON
+            if item.final_status == "invalid"
+            else item.primary.execution_error or "primary execution failed"
+        )
+        logger.warning(
+            "Batch item failed: unique_id=%s execution_status=%s "
+            "final_status=%s detail=%s",
+            item.entry.unique_id,
+            item.primary.execution_status,
+            item.final_status,
+            detail,
+        )
     logger.info(
         "Batch counters: total=%d round_1_success=%d verification_requested=%d "
         "verification_success=%d verification_changed_to_false=%d "
