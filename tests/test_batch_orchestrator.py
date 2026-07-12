@@ -11,8 +11,12 @@ from calls_analyser.services.batch_orchestrator import (
     BatchAnalysisOrchestrator,
     BatchExecutorContractError,
     BatchItemResult,
+    DECISION_STATUSES,
+    EXECUTION_STATUSES,
+    FINAL_STATUSES,
     RoundExecutionResult,
     RoundSpec,
+    VERIFICATION_STATUSES,
 )
 from calls_analyser.services.tenant import TenantConfig
 
@@ -26,14 +30,14 @@ def _round_spec() -> RoundSpec:
         model_key="primary-model",
         prompt_key="follow-up",
         prompt_text="Return JSON.",
-        prompt_version="v1",
+        prompt_version=1,
         custom_fragment="",
         language="en",
         usage_mode="ui_mass",
         stage_name="primary",
         provider="google",
         model_identity="gemini-primary",
-        cache_identity="follow-up:v1:google:gemini-primary",
+        cache_identity="follow-up:1:google:gemini-primary",
     )
 
 
@@ -168,6 +172,28 @@ def test_round_execution_result_retains_repository_cache_key() -> None:
 
     assert result.cache_key is cache_key
     assert get_type_hints(RoundExecutionResult)["cache_key"] == CacheKey | None
+
+
+def test_round_spec_prompt_version_matches_cache_key_integer_shape() -> None:
+    spec = _round_spec()
+
+    assert spec.prompt_version == 1
+    assert get_type_hints(RoundSpec)["prompt_version"] is int
+
+
+def test_status_contracts_match_the_approved_closed_sets_exactly() -> None:
+    assert EXECUTION_STATUSES == {"success", "error", "missing"}
+    assert DECISION_STATUSES == {"valid", "invalid", "unavailable"}
+    assert FINAL_STATUSES == {"pending", "complete", "fallback", "error", "invalid"}
+    assert VERIFICATION_STATUSES == {
+        "not_requested",
+        "disabled",
+        "pending",
+        "shadow_complete",
+        "complete",
+        "failed",
+        "config_error",
+    }
 
 
 @pytest.mark.parametrize(

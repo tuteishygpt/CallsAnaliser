@@ -37,7 +37,7 @@ class RoundSpec:
     model_key: str
     prompt_key: str
     prompt_text: str
-    prompt_version: str
+    prompt_version: int
     custom_fragment: str
     language: str
     usage_mode: str
