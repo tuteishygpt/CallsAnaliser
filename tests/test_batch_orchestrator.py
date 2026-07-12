@@ -564,6 +564,97 @@ def test_executor_item_progress_is_emitted_before_execute_returns(tenant) -> Non
     assert result.items[0].final_decision is False
 
 
+def test_partial_primary_progress_uses_orchestrator_counts_and_synthesizes_once(
+    tenant,
+) -> None:
+    events: list[BatchProgressEvent] = []
+
+    class PartialPrimaryExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant, bypass_cache, round_spec
+            assert progress is not None
+            progress("second", _decision(False, "callback"), 99, 100)
+            return {
+                "second": _decision(False, "returned second"),
+                "first": _decision(False, "returned first"),
+            }
+
+    result = BatchAnalysisOrchestrator(PartialPrimaryExecutor({})).run(
+        [_entry("first"), _entry("second"), _entry("missing")],
+        tenant,
+        _round_spec(),
+        progress=events.append,
+    )
+
+    item_events = [event for event in events if event.event == "primary_complete"]
+    assert [event.unique_id for event in item_events] == [
+        "second",
+        "first",
+        "missing",
+    ]
+    assert [event.completed for event in item_events] == [1, 2, 3]
+    assert [event.total for event in item_events] == [3, 3, 3]
+    assert result.items[1].final_reason == "returned second"
+    assert result.items[2].primary.execution_status == "missing"
+
+
+def test_partial_verification_progress_uses_orchestrator_counts_and_synthesizes_once(
+    tenant,
+) -> None:
+    events: list[BatchProgressEvent] = []
+
+    class PartialVerificationExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant, bypass_cache
+            if round_spec.stage_name == "primary":
+                return {entry.unique_id: _decision(True) for entry in entries}
+            assert progress is not None
+            progress("third", _decision(False, "callback"), 50, 50)
+            return {
+                "third": _decision(True, "returned third"),
+                "first": _decision(False, "returned first"),
+            }
+
+    result = BatchAnalysisOrchestrator(PartialVerificationExecutor({})).run(
+        [_entry("first"), _entry("second"), _entry("third")],
+        tenant,
+        _round_spec(),
+        verification_mode="enforce",
+        verification_spec=_verification_spec(),
+        progress=events.append,
+    )
+
+    item_events = [
+        event for event in events if event.event == "verification_complete"
+    ]
+    assert [event.unique_id for event in item_events] == [
+        "third",
+        "first",
+        "second",
+    ]
+    assert [event.completed for event in item_events] == [1, 2, 3]
+    assert [event.total for event in item_events] == [3, 3, 3]
+    assert result.items[2].final_decision is True
+    assert result.items[2].final_reason == "returned third"
+    assert result.items[1].verification.execution_status == "missing"
+
+
 def test_progress_callback_exceptions_are_logged_and_ignored(tenant, caplog) -> None:
     def broken_callback(event: BatchProgressEvent) -> None:
         raise RuntimeError(f"cannot handle {event.event}")

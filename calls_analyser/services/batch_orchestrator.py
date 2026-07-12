@@ -195,13 +195,15 @@ class BatchAnalysisOrchestrator:
         )
         entries_by_id = {entry.unique_id: entry for entry in ordered_entries}
         reported_primary_ids: set[str] = set()
+        primary_completed = 0
 
         def emit_primary_complete(
             unique_id: str,
             execution: RoundExecutionResult,
-            completed: int,
-            total: int,
+            _executor_completed: int,
+            _executor_total: int,
         ) -> None:
+            nonlocal primary_completed
             entry = entries_by_id.get(unique_id)
             if entry is None:
                 raise BatchExecutorContractError(
@@ -212,14 +214,15 @@ class BatchAnalysisOrchestrator:
                     f"executor reported duplicate progress for result ID: {unique_id}",
                 )
             reported_primary_ids.add(unique_id)
+            primary_completed += 1
             item = self._build_primary_item(entry, execution, verification_mode)
             self._emit_progress(
                 progress,
                 BatchProgressEvent(
                     event="primary_complete",
                     stage_name=round_spec.stage_name,
-                    completed=completed,
-                    total=total,
+                    completed=primary_completed,
+                    total=len(ordered_entries),
                     unique_id=unique_id,
                     item=item,
                 ),
@@ -234,7 +237,7 @@ class BatchAnalysisOrchestrator:
 
         primary_items: dict[str, BatchItemResult] = {}
         candidates: list[CallLogEntry] = []
-        for completed, entry in enumerate(ordered_entries, start=1):
+        for entry in ordered_entries:
             primary = execution_results.get(entry.unique_id) or self._missing_result(
                 round_spec,
             )
@@ -250,11 +253,12 @@ class BatchAnalysisOrchestrator:
                 emit_primary_complete(
                     entry.unique_id,
                     primary,
-                    completed,
-                    len(ordered_entries),
+                    0,
+                    0,
                 )
 
         verification_results: Mapping[str, RoundExecutionResult] = {}
+        verification_completed = 0
         if candidates:
             verification_stage = (
                 verification_spec.stage_name
@@ -279,9 +283,10 @@ class BatchAnalysisOrchestrator:
                 def emit_verification_complete(
                     unique_id: str,
                     execution: RoundExecutionResult,
-                    completed: int,
-                    total: int,
+                    _executor_completed: int,
+                    _executor_total: int,
                 ) -> None:
+                    nonlocal verification_completed
                     if unique_id not in candidates_by_id:
                         raise BatchExecutorContractError(
                             "executor reported verification progress for "
@@ -293,6 +298,7 @@ class BatchAnalysisOrchestrator:
                             f"for result ID: {unique_id}",
                         )
                     reported_verification_ids.add(unique_id)
+                    verification_completed += 1
                     progress_item = self._apply_verification(
                         primary_items[unique_id],
                         execution,
@@ -303,8 +309,8 @@ class BatchAnalysisOrchestrator:
                         BatchProgressEvent(
                             event="verification_complete",
                             stage_name=verification_spec.stage_name,
-                            completed=completed,
-                            total=total,
+                            completed=verification_completed,
+                            total=len(candidates),
                             unique_id=unique_id,
                             item=progress_item,
                         ),
@@ -321,7 +327,6 @@ class BatchAnalysisOrchestrator:
 
         finalized: dict[str, BatchItemResult] = {}
         candidate_ids = {entry.unique_id for entry in candidates}
-        verification_completed = 0
         for entry in ordered_entries:
             item = primary_items[entry.unique_id]
             if entry.unique_id in candidate_ids:
