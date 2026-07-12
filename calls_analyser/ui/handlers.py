@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import tempfile
+import threading
 from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -1022,7 +1024,7 @@ class UIHandlers:
             )
 
             items_by_id = {}
-            snapshots = []
+            progress_queue = queue.Queue()
 
             def capture_progress(event):  # noqa: ANN001
                 if event.unique_id is None:
@@ -1036,20 +1038,38 @@ class UIHandlers:
                     for entry in entries
                     if entry.unique_id in items_by_id
                 ]
-                snapshots.append((event, pd.DataFrame(rows)))
+                progress_queue.put(("progress", event, pd.DataFrame(rows)))
 
-            run_result = orchestrator.run_with_settings(
-                entries,
-                tenant,
-                settings,
-                primary_prompt_key=self.deps.batch_prompt_key,
-                primary_custom_prompt=prompt_override or "",
-                primary_usage_mode="ui_mass",
-                verification_usage_mode="ui_mass_verify",
-                progress=capture_progress,
-            )
+            def run_orchestrator() -> None:
+                try:
+                    result = orchestrator.run_with_settings(
+                        entries,
+                        tenant,
+                        settings,
+                        primary_prompt_key=self.deps.batch_prompt_key,
+                        primary_custom_prompt=prompt_override or "",
+                        primary_usage_mode="ui_mass",
+                        verification_usage_mode="ui_mass_verify",
+                        progress=capture_progress,
+                    )
+                except BaseException as exc:
+                    progress_queue.put(("error", exc))
+                else:
+                    progress_queue.put(("result", result))
 
-            for event, partial_df in snapshots:
+            worker = threading.Thread(target=run_orchestrator, name="ui-batch-orchestrator")
+            worker.start()
+            run_result = None
+            while run_result is None:
+                message = progress_queue.get()
+                if message[0] == "error":
+                    worker.join()
+                    raise message[1]
+                if message[0] == "result":
+                    run_result = message[1]
+                    worker.join()
+                    continue
+                _, event, partial_df = message
                 phase = "Verification" if event.stage_name == "verification" else "Primary analysis"
                 interim_msg = f"{phase} {event.completed}/{event.total}... UID `{event.unique_id}`"
                 yield (
@@ -1082,66 +1102,6 @@ class UIHandlers:
                 visible_filter,
             )
             return
-
-            rows = []  # pragma: no cover - legacy path retained temporarily
-
-            for i, entry in enumerate(entries, start=1):
-                pct = int((i / total) * 100)
-                row_data = self._build_row_base(entry)
-
-                try:
-                    result = self.deps.analysis_service.analyze_call(
-                        unique_id=entry.unique_id,
-                        tenant=tenant,
-                        lang=self.deps.batch_language,
-                        options=AnalysisOptions(
-                            model_key=self.deps.batch_model_key,
-                            prompt_key=self.deps.batch_prompt_key,
-                            custom_prompt=prompt_override,
-                            mode="ui_mass",
-                            call_entry=entry,
-                        ),
-                    )
-
-                    self._fill_row_with_text(row_data, entry, tenant, result.text)
-                except Exception as exc:
-                    error_msg = str(exc)
-                    # Check if it's a retryable error that failed after all retries
-                    if "503" in error_msg or "UNAVAILABLE" in error_msg or "overloaded" in error_msg.lower():
-                        self._fill_row_error(
-                            row_data,
-                            "⏳ Model overloaded (retried 5 times, failed)",
-                        )
-                    else:
-                        self._fill_row_error(row_data, f"❌ {exc}")
-
-                rows.append(row_data)
-
-                partial_df = pd.DataFrame(rows)
-                interim_msg = f"Analyzing {i}/{total} ({pct}%)… UID `{entry.unique_id}`"
-
-                yield (
-                    gr.update(value=utils.prepare_results_display(partial_df), visible=True),
-                    partial_df,
-                    h3(interim_msg),
-                    hidden_file,
-                    hidden_filter,
-                )
-
-            final_df = pd.DataFrame(rows)
-            ok_count = len(final_df[final_df["Status"] == "✅"])
-            final_msg = (
-                "✅ Batch analysis completed. "
-                f"Found: {total}, processed successfully: {ok_count}"
-            )
-
-            yield (
-                gr.update(value=utils.prepare_results_display(final_df), visible=True),
-                final_df,
-                h2_success(final_msg),
-                hidden_file,
-                visible_filter,
-            )
 
         except Exception as exc:
             yield (

@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pandas as pd
@@ -261,6 +263,64 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
+
+
+def test_ui_mass_analyze_yields_progress_before_orchestrator_completes(monkeypatch) -> None:
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2024, 2, 15, 9, 30),
+        caller_id="Alice",
+        destination="Support",
+        duration_seconds=123,
+        unique_id="call-1",
+        raw={},
+    )
+    tenant, _analysis = _configure_batch_environment(monkeypatch, entries=[entry])
+    callback_sent = threading.Event()
+    release_run = threading.Event()
+
+    class _BlockingOrchestrator:
+        def run_with_settings(self, entries, tenant, settings, **kwargs):  # noqa: ANN001, ANN201
+            executor = _RecordingRoundExecutor()
+            result = BatchAnalysisOrchestrator(executor).run(
+                entries,
+                tenant,
+                SimpleNamespace(
+                    stage_name="primary",
+                    model_key="fake-model",
+                    prompt_key="batch",
+                    prompt_text="Primary",
+                    prompt_version=1,
+                    language="en",
+                    usage_mode="ui_mass",
+                ),
+                progress=kwargs["progress"],
+            )
+            callback_sent.set()
+            assert release_run.wait(2), "test did not release orchestrator"
+            return result
+
+    monkeypatch.setattr(app.handlers.deps, "batch_orchestrator", _BlockingOrchestrator())
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "tenant_settings_service",
+        SimpleNamespace(resolve=lambda _tenant_id: TenantRuntimeSettings(
+            batch_model_key="fake-model",
+            batch_language_code="en",
+            follow_up_verification_mode="off",
+        )),
+    )
+
+    output = app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True)
+    assert "Starting batch analysis" in next(output)[2]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        progress_future = pool.submit(next, output)
+        assert callback_sent.wait(1)
+        try:
+            progress = progress_future.result(timeout=0.5)
+        finally:
+            release_run.set()
+
+    assert "Primary analysis 1/1" in progress[2]
 
 
 def test_ui_mass_analyze_uses_tenant_settings_and_projects_two_pass_audit(monkeypatch) -> None:
