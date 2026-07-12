@@ -215,6 +215,14 @@ class BatchAnalysisOrchestrator:
             )
         except (KeyError, ValueError) as exc:
             return primary, None, str(exc)
+        if verification.prompt_key != verification_prompt_key:
+            return (
+                primary,
+                None,
+                "verification prompt key "
+                f"{verification_prompt_key!r} resolved to fallback "
+                f"{verification.prompt_key!r}",
+            )
         if not verification.prompt_text.strip():
             return primary, None, "verification prompt body is empty"
         if verification.cache_identity == primary.cache_identity:
@@ -273,7 +281,7 @@ class BatchAnalysisOrchestrator:
         custom_fragment = custom_prompt.strip()
         prompt_text = custom_fragment or template.body
         cache_identity = self._round_cache_identity(
-            prompt_key=prompt_key,
+            prompt_key=template.key,
             prompt_version=template.version,
             provider=provider_name,
             model_key=model_key,
@@ -281,7 +289,7 @@ class BatchAnalysisOrchestrator:
         )
         return RoundSpec(
             model_key=model_key,
-            prompt_key=prompt_key,
+            prompt_key=template.key,
             prompt_text=prompt_text,
             prompt_version=template.version,
             custom_fragment=custom_fragment,

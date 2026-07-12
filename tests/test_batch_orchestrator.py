@@ -269,6 +269,34 @@ def test_defensively_rejects_identical_round_cache_identity(tenant, monkeypatch)
     assert error is not None and "cache identity" in error
 
 
+def test_unknown_verification_prompt_fallback_is_rejected(tenant) -> None:
+    primary, verification, error = _configured_orchestrator(_Executor({})).resolve_round_specs(
+        tenant,
+        _runtime_settings(follow_up_verification_prompt_key="unknown"),
+        primary_prompt_key="primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert primary.prompt_key == "primary"
+    assert verification is None
+    assert error is not None and "unknown" in error and "simple" in error
+
+
+def test_effective_primary_prompt_key_collision_is_rejected(tenant) -> None:
+    primary, verification, error = _configured_orchestrator(_Executor({})).resolve_round_specs(
+        tenant,
+        _runtime_settings(follow_up_verification_prompt_key="simple"),
+        primary_prompt_key="unknown-primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert primary.prompt_key == "simple"
+    assert verification is None
+    assert error is not None and "differ" in error
+
+
 def test_invalid_verification_config_runs_primary_and_falls_back_each_positive(tenant) -> None:
     executor = _RoundExecutor(
         {"primary": {"yes-1": _decision(True), "no": _decision(False), "yes-2": _decision(True)}}
