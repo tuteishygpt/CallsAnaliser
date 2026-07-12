@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from calls_analyser.services.batch_results import EXPORT_RESULT_COLUMNS
 from calls_analyser.services.email_report import EmailReportService
 
 
@@ -141,9 +142,4 @@ def test_report_orders_final_columns_before_audit_columns() -> None:
 
     report = EmailReportService._prepare_report_results(results)
 
-    assert list(report.columns) == [
-        "Start", "Caller", "Destination", "user", "Duration (s)",
-        "Needs follow-up", "Reason", "Initial needs follow-up", "Initial reason",
-        "Verification needs follow-up", "Verification reason", "Verification status",
-        "Link", "Status",
-    ]
+    assert list(report.columns) == EXPORT_RESULT_COLUMNS

@@ -7,6 +7,7 @@ import datetime as _dt
 import pandas as pd
 import pytest
 
+from calls_analyser.services.batch_results import EXPORT_RESULT_COLUMNS
 from calls_analyser.ui.utils import label_row, prepare_results_display
 
 
@@ -207,3 +208,11 @@ def test_prepare_results_display_preserves_audit_columns() -> None:
     display = prepare_results_display(source)
 
     assert list(display.columns) == audit_columns
+
+
+def test_result_display_order_uses_canonical_export_schema() -> None:
+    source = pd.DataFrame([{column: "" for column in reversed(EXPORT_RESULT_COLUMNS)}])
+
+    display = prepare_results_display(source)
+
+    assert list(display.columns) == EXPORT_RESULT_COLUMNS

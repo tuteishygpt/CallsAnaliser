@@ -8,25 +8,11 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 from calls_analyser.ports.mail import MailMessage, MailPort
+from calls_analyser.services.batch_results import EXPORT_RESULT_COLUMNS
 from calls_analyser.ui.utils import prepare_results_display
 
 
-REPORT_COLUMNS = [
-    "Start",
-    "Caller",
-    "Destination",
-    "user",
-    "Duration (s)",
-    "Needs follow-up",
-    "Reason",
-    "Initial needs follow-up",
-    "Initial reason",
-    "Verification needs follow-up",
-    "Verification reason",
-    "Verification status",
-    "Link",
-    "Status",
-]
+REPORT_COLUMNS = EXPORT_RESULT_COLUMNS
 _LINK_PATTERN = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
 
 

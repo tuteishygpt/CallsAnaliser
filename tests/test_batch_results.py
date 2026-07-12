@@ -7,7 +7,11 @@ import pytest
 
 from calls_analyser.domain.models import CallLogEntry
 from calls_analyser.services.batch_orchestrator import BatchItemResult, RoundExecutionResult
-from calls_analyser.services.batch_results import build_batch_item_row
+from calls_analyser.services.batch_results import (
+    CANONICAL_RESULT_COLUMNS,
+    EXPORT_RESULT_COLUMNS,
+    build_batch_item_row,
+)
 from calls_analyser.services.follow_up import FollowUpDecision
 from calls_analyser.services.tenant import TenantConfig
 
@@ -149,3 +153,53 @@ def test_build_batch_item_row_projects_state(item: BatchItemResult, expected: di
     assert row["UniqueId"] == "call-1"
     assert row["user"] == "operator"
     assert row["Link"] == '<a href="https://calls.test/recording/call-1" target="_blank">Listen</a>'
+
+
+def test_invalid_verification_keeps_diagnostic_reason() -> None:
+    item = replace(
+        _item(),
+        primary_decision=FollowUpDecision(True, "Call back"),
+        primary_decision_status="valid",
+        verification=RoundExecutionResult(raw_text="not a strict decision"),
+        verification_decision_status="invalid",
+        final_decision=True,
+        final_reason="Call back",
+        final_status="fallback",
+        verification_status="failed",
+    )
+
+    row = build_batch_item_row(item, TENANT)
+
+    assert row["Verification reason"] == (
+        "Invalid verification response: could not parse follow-up decision."
+    )
+
+
+def test_canonical_row_and_export_schemas_have_one_stable_order() -> None:
+    row = build_batch_item_row(_item(), TENANT)
+
+    assert list(row) == CANONICAL_RESULT_COLUMNS
+    assert EXPORT_RESULT_COLUMNS == [
+        column for column in CANONICAL_RESULT_COLUMNS if column != "UniqueId"
+    ]
+
+
+def test_recording_link_escapes_attribute_injection() -> None:
+    entry = _item().entry.model_copy(
+        update={"raw": {"recording_url": 'https://calls.test/recording/1" onmouseover="alert(1)'}},
+    )
+
+    row = build_batch_item_row(replace(_item(), entry=entry), TENANT)
+
+    assert row["Link"] == (
+        '<a href="https://calls.test/recording/1&quot; onmouseover=&quot;alert(1)" '
+        'target="_blank">Listen</a>'
+    )
+
+
+def test_recording_link_rejects_non_http_scheme() -> None:
+    entry = _item().entry.model_copy(update={"raw": {"recording_url": "javascript:alert(1)"}})
+
+    row = build_batch_item_row(replace(_item(), entry=entry), TENANT)
+
+    assert row["Link"] == ""

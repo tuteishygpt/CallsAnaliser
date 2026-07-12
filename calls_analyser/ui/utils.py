@@ -7,25 +7,12 @@ from typing import List, Optional, Tuple
 import gradio as gr
 import pandas as pd
 
+from calls_analyser.services.batch_results import EXPORT_RESULT_COLUMNS
+
 from .config import CALL_TYPE_OPTIONS
 
 
-BASE_RESULT_DISPLAY_COLUMNS = [
-    "Start",
-    "Caller",
-    "Destination",
-    "user",
-    "Duration (s)",
-    "Needs follow-up",
-    "Reason",
-    "Initial needs follow-up",
-    "Initial reason",
-    "Verification needs follow-up",
-    "Verification reason",
-    "Verification status",
-    "Link",
-    "Status",
-]
+BASE_RESULT_DISPLAY_COLUMNS = EXPORT_RESULT_COLUMNS
 
 
 def format_start_for_display(value: object) -> str:
