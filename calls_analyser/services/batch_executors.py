@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from itertools import count
+from threading import Lock
 from typing import Any, Callable, Mapping, Sequence
 
 from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
@@ -11,6 +12,7 @@ from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.services.batch_orchestrator import (
     ExecutorProgress,
     RoundExecutionResult,
+    RoundExecutionResults,
     RoundSpec,
     ValidationResults,
 )
@@ -164,6 +166,7 @@ class VertexBatchExecutor:
             deque[tuple[RoundSpec, int, dict[str, AnalysisResult], dict[str, CacheKey]]],
         ] = {}
         self._execution_ids = count(1)
+        self._pending_lock = Lock()
 
     def execute(
         self,
@@ -174,13 +177,14 @@ class VertexBatchExecutor:
         bypass_cache: bool = False,
         progress: ExecutorProgress | None = None,
     ) -> dict[str, RoundExecutionResult]:
-        execution_id = next(self._execution_ids)
+        with self._pending_lock:
+            execution_id = next(self._execution_ids)
         cache_keys = {
             entry.unique_id: self._cache_key(entry, tenant, round_spec)
             for entry in entries
         }
         cached = {} if bypass_cache else self._get_many(cache_keys.values())
-        results: dict[str, RoundExecutionResult] = {}
+        results = RoundExecutionResults(execution_id=execution_id)
         persisted: dict[str, AnalysisResult] = {}
         tasks: list[BatchTask] = []
         entries_by_id = {entry.unique_id: entry for entry in entries}
@@ -296,9 +300,10 @@ class VertexBatchExecutor:
             if result is not None and progress is not None:
                 completed += 1
                 progress(entry.unique_id, result, completed, len(entries))
-        self._pending_runs.setdefault(id(round_spec), deque()).append(
-            (round_spec, execution_id, persisted, cache_keys),
-        )
+        with self._pending_lock:
+            self._pending_runs.setdefault(id(round_spec), deque()).append(
+                (round_spec, execution_id, persisted, cache_keys),
+            )
         return results
 
     def record_validation(
@@ -306,26 +311,27 @@ class VertexBatchExecutor:
         round_spec: RoundSpec,
         validated_results: Mapping[str, bool],
     ) -> None:
-        pending = self._pending_runs.get(id(round_spec))
-        if not pending:
-            return
-        execution_id = (
-            validated_results.execution_id
-            if isinstance(validated_results, ValidationResults)
-            else None
-        )
-        index = 0
-        if execution_id is not None:
-            index = next(
-                (i for i, run in enumerate(pending) if run[1] == execution_id),
-                -1,
-            )
-            if index < 0:
+        with self._pending_lock:
+            pending = self._pending_runs.get(id(round_spec))
+            if not pending:
                 return
-        _spec, _execution_id, saved, cache_keys = pending[index]
-        del pending[index]
-        if not pending:
-            del self._pending_runs[id(round_spec)]
+            execution_id = (
+                validated_results.execution_id
+                if isinstance(validated_results, ValidationResults)
+                else None
+            )
+            index = 0
+            if execution_id is not None:
+                index = next(
+                    (i for i, run in enumerate(pending) if run[1] == execution_id),
+                    -1,
+                )
+                if index < 0:
+                    return
+            _spec, _execution_id, saved, cache_keys = pending[index]
+            del pending[index]
+            if not pending:
+                del self._pending_runs[id(round_spec)]
         for unique_id, decision_valid in validated_results.items():
             analysis = saved.get(unique_id)
             if analysis is None:

@@ -354,3 +354,33 @@ def test_vertex_executor_turns_runner_construction_failure_into_per_item_errors(
     assert set(results) == {"one", "two"}
     assert all(result.execution_status == "error" for result in results.values())
     assert all(result.execution_error == "Vertex unavailable" for result in results.values())
+
+
+def test_empty_overlapping_vertex_runs_keep_identity_through_missing_synthesis() -> None:
+    cache = BulkCache()
+    call_log = VertexCallLog()
+    executor = make_vertex_executor(cache, call_log, RecordingUsageTracker())
+    shared_spec = spec(mode="scheduler_batch")
+    orchestrator = object.__new__(BatchAnalysisOrchestrator)
+    orchestrator._executor = executor  # noqa: SLF001
+    entry = [CallLogEntry(unique_id="same")]
+
+    first = orchestrator._execute_once(  # noqa: SLF001
+        entry, TenantConfig("one", "url"), shared_spec,
+        bypass_cache=False, progress=None,
+    )
+    second = orchestrator._execute_once(  # noqa: SLF001
+        entry, TenantConfig("two", "url"), shared_spec,
+        bypass_cache=False, progress=None,
+    )
+    first_validation = orchestrator._validation_mapping(first, lambda _r: (None, "invalid"))  # noqa: SLF001
+    second_validation = orchestrator._validation_mapping(second, lambda _r: (None, "invalid"))  # noqa: SLF001
+
+    assert first_validation.execution_id is not None
+    assert second_validation.execution_id is not None
+    assert first_validation.execution_id != second_validation.execution_id
+
+    executor.record_validation(shared_spec, second_validation)
+    assert executor._pending_runs[id(shared_spec)][0][1] == first_validation.execution_id  # noqa: SLF001
+    executor.record_validation(shared_spec, first_validation)
+    assert id(shared_spec) not in executor._pending_runs  # noqa: SLF001

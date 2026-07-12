@@ -146,6 +146,14 @@ class ValidationResults(dict[str, bool]):
         self.execution_id = execution_id
 
 
+class RoundExecutionResults(dict[str, RoundExecutionResult]):
+    """Executor results carrying identity even when the mapping is empty."""
+
+    def __init__(self, *args: Any, execution_id: int | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.execution_id = execution_id
+
+
 class BatchRoundExecutor(Protocol):
     def execute(
         self,
@@ -700,11 +708,11 @@ class BatchAnalysisOrchestrator:
             raise BatchExecutorContractError(
                 f"executor returned unrequested result IDs: {extras}",
             )
-        return {
+        return RoundExecutionResults({
             entry.unique_id: execution_results.get(entry.unique_id)
             or self._missing_result(round_spec)
             for entry in entries
-        }
+        }, execution_id=getattr(execution_results, "execution_id", None))
 
     @staticmethod
     def _validation_mapping(
@@ -714,12 +722,14 @@ class BatchAnalysisOrchestrator:
             tuple[FollowUpDecision | None, str],
         ],
     ) -> ValidationResults:
-        execution_ids = {
-            result.execution_id
-            for result in results.values()
-            if result.execution_id is not None
-        }
-        execution_id = next(iter(execution_ids)) if len(execution_ids) == 1 else None
+        execution_id = getattr(results, "execution_id", None)
+        if execution_id is None:
+            execution_ids = {
+                result.execution_id
+                for result in results.values()
+                if result.execution_id is not None
+            }
+            execution_id = next(iter(execution_ids)) if len(execution_ids) == 1 else None
         return ValidationResults({
             unique_id: BatchAnalysisOrchestrator._is_parse_valid(result, parse)
             for unique_id, result in results.items()
