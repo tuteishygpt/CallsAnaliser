@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from calls_analyser.ui.handlers import UIHandlers
+from calls_analyser.ui.layout import USAGE_REPORT_MODE_CHOICES
 
 
 class _FakeUsageReportRepository:
@@ -153,3 +154,10 @@ def test_load_usage_report_filter_choices() -> None:
     assert user_update["choices"] == ["All", "(unknown)", "agent-1"]
     assert message == ""
     assert repository.list_filter_values_calls == ["lix"]
+
+
+def test_usage_report_mode_choices_include_verification_rounds() -> None:
+    assert USAGE_REPORT_MODE_CHOICES == [
+        "All", "ui_direct", "ui_mass", "ui_mass_verify",
+        "scheduler_batch", "scheduler_batch_verify", "test",
+    ]

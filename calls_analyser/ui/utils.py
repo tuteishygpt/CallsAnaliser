@@ -18,6 +18,11 @@ BASE_RESULT_DISPLAY_COLUMNS = [
     "Duration (s)",
     "Needs follow-up",
     "Reason",
+    "Initial needs follow-up",
+    "Initial reason",
+    "Verification needs follow-up",
+    "Verification reason",
+    "Verification status",
     "Link",
     "Status",
 ]

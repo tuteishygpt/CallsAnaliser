@@ -24,6 +24,16 @@ JS_FIX_LINKS = """
 }
 """
 
+USAGE_REPORT_MODE_CHOICES = [
+    "All",
+    "ui_direct",
+    "ui_mass",
+    "ui_mass_verify",
+    "scheduler_batch",
+    "scheduler_batch_verify",
+    "test",
+]
+
 
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
     auth_mode = handlers.has_auth_users()
@@ -218,7 +228,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                         label="Date to", placeholder="YYYY-MM-DD", scale=1
                     )
                     report_mode_dd = gr.Dropdown(
-                        choices=["All", "ui_direct", "ui_mass", "scheduler_batch", "test"],
+                        choices=USAGE_REPORT_MODE_CHOICES,
                         value="All",
                         label="Mode",
                         type="value",

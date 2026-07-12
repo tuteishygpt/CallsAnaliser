@@ -192,3 +192,18 @@ def test_prepare_results_display_hides_unique_id_formats_start_and_keeps_user() 
     assert display.iloc[0]["Start"] == "2026-06-23 17:30:10"
     assert display.iloc[0]["user"] == "operator-1"
     assert "UniqueId" in source.columns
+
+
+def test_prepare_results_display_preserves_audit_columns() -> None:
+    audit_columns = [
+        "Initial needs follow-up",
+        "Initial reason",
+        "Verification needs follow-up",
+        "Verification reason",
+        "Verification status",
+    ]
+    source = pd.DataFrame([{column: "audit" for column in audit_columns} | {"UniqueId": "call-1"}])
+
+    display = prepare_results_display(source)
+
+    assert list(display.columns) == audit_columns

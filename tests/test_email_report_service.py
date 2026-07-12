@@ -126,3 +126,24 @@ def test_send_does_not_make_non_http_link_clickable() -> None:
     html_body = mail.messages[0].html_body
     assert "javascript:" not in html_body
     assert ">Listen<" not in html_body
+
+
+def test_report_orders_final_columns_before_audit_columns() -> None:
+    results = _results().assign(
+        **{
+            "Initial needs follow-up": "Yes",
+            "Initial reason": "Initial",
+            "Verification needs follow-up": "No",
+            "Verification reason": "Verified",
+            "Verification status": "complete",
+        }
+    )
+
+    report = EmailReportService._prepare_report_results(results)
+
+    assert list(report.columns) == [
+        "Start", "Caller", "Destination", "user", "Duration (s)",
+        "Needs follow-up", "Reason", "Initial needs follow-up", "Initial reason",
+        "Verification needs follow-up", "Verification reason", "Verification status",
+        "Link", "Status",
+    ]
