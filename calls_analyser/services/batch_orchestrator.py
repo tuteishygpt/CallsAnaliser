@@ -228,19 +228,18 @@ class BatchAnalysisOrchestrator:
                 ),
             )
 
-        execution_results = self._execute_round(
+        execution_results = self._execute_parse_retry(
             ordered_entries,
             tenant,
             round_spec,
+            parse=lambda result: self._parse_primary(result, verification_mode),
             progress=emit_primary_complete,
         )
 
         primary_items: dict[str, BatchItemResult] = {}
         candidates: list[CallLogEntry] = []
         for entry in ordered_entries:
-            primary = execution_results.get(entry.unique_id) or self._missing_result(
-                round_spec,
-            )
+            primary = execution_results[entry.unique_id]
             item = self._build_primary_item(entry, primary, verification_mode)
             primary_items[entry.unique_id] = item
             if (
@@ -316,10 +315,11 @@ class BatchAnalysisOrchestrator:
                         ),
                     )
 
-                verification_results = self._execute_round(
+                verification_results = self._execute_parse_retry(
                     tuple(candidates),
                     tenant,
                     verification_spec,
+                    parse=self._parse_strict,
                     progress=emit_verification_complete,
                 )
             else:
@@ -379,18 +379,105 @@ class BatchAnalysisOrchestrator:
         )
         return result
 
-    def _execute_round(
+    def _execute_parse_retry(
         self,
         entries: Sequence[CallLogEntry],
         tenant: TenantConfig,
         round_spec: RoundSpec,
         *,
+        parse: Callable[
+            [RoundExecutionResult],
+            tuple[FollowUpDecision | None, str],
+        ],
         progress: ExecutorProgress | None,
     ) -> Mapping[str, RoundExecutionResult]:
+        ordered_entries = tuple(entries)
+        def progress_for_attempt(
+            attempt_entries: Sequence[CallLogEntry],
+            *,
+            suppress_retryable: bool,
+        ) -> ExecutorProgress | None:
+            if progress is None:
+                return None
+            attempt_ids = {entry.unique_id for entry in attempt_entries}
+            reported_ids: set[str] = set()
+
+            def handle_progress(
+                unique_id: str,
+                execution: RoundExecutionResult,
+                completed: int,
+                total: int,
+            ) -> None:
+                if unique_id not in attempt_ids:
+                    raise BatchExecutorContractError(
+                        "executor reported progress for unrequested result ID: "
+                        f"{unique_id}",
+                    )
+                if unique_id in reported_ids:
+                    raise BatchExecutorContractError(
+                        "executor reported duplicate progress for result ID: "
+                        f"{unique_id}",
+                    )
+                reported_ids.add(unique_id)
+                if suppress_retryable and not self._is_parse_valid(execution, parse):
+                    return
+                progress(unique_id, execution, completed, total)
+
+            return handle_progress
+
+        initial = self._execute_once(
+            ordered_entries,
+            tenant,
+            round_spec,
+            bypass_cache=False,
+            progress=progress_for_attempt(
+                ordered_entries,
+                suppress_retryable=True,
+            ),
+        )
+        initial_validation = self._validation_mapping(initial, parse)
+        self._executor.record_validation(round_spec, initial_validation)
+
+        retry_entries = tuple(
+            entry
+            for entry in ordered_entries
+            if not initial_validation[entry.unique_id]
+        )
+        if not retry_entries:
+            return initial
+
+        retry = self._execute_once(
+            retry_entries,
+            tenant,
+            round_spec,
+            bypass_cache=True,
+            progress=progress_for_attempt(
+                retry_entries,
+                suppress_retryable=False,
+            ),
+        )
+        self._executor.record_validation(
+            round_spec,
+            self._validation_mapping(retry, parse),
+        )
+        merged = dict(initial)
+        merged.update(retry)
+        return merged
+
+    def _execute_once(
+        self,
+        entries: Sequence[CallLogEntry],
+        tenant: TenantConfig,
+        round_spec: RoundSpec,
+        *,
+        bypass_cache: bool,
+        progress: ExecutorProgress | None,
+    ) -> dict[str, RoundExecutionResult]:
         execution_results = self._executor.execute(
             entries,
             tenant,
             round_spec,
+            bypass_cache=bypass_cache,
             progress=progress,
         )
         requested_ids = {entry.unique_id for entry in entries}
@@ -400,7 +487,34 @@ class BatchAnalysisOrchestrator:
             raise BatchExecutorContractError(
                 f"executor returned unrequested result IDs: {extras}",
             )
-        return execution_results
+        return {
+            entry.unique_id: execution_results.get(entry.unique_id)
+            or self._missing_result(round_spec)
+            for entry in entries
+        }
+
+    @staticmethod
+    def _validation_mapping(
+        results: Mapping[str, RoundExecutionResult],
+        parse: Callable[
+            [RoundExecutionResult],
+            tuple[FollowUpDecision | None, str],
+        ],
+    ) -> dict[str, bool]:
+        return {
+            unique_id: BatchAnalysisOrchestrator._is_parse_valid(result, parse)
+            for unique_id, result in results.items()
+        }
+
+    @staticmethod
+    def _is_parse_valid(
+        result: RoundExecutionResult,
+        parse: Callable[
+            [RoundExecutionResult],
+            tuple[FollowUpDecision | None, str],
+        ],
+    ) -> bool:
+        return parse(result)[1] == "valid"
 
     @staticmethod
     def _validate_verification_configuration(
@@ -437,6 +551,15 @@ class BatchAnalysisOrchestrator:
             decision = FollowUpDecisionParser.parse_compatibility(result.raw_text)
         else:
             decision = FollowUpDecisionParser.parse_strict(result.raw_text)
+        return (decision, "valid") if decision is not None else (None, "invalid")
+
+    @staticmethod
+    def _parse_strict(
+        result: RoundExecutionResult,
+    ) -> tuple[FollowUpDecision | None, str]:
+        if result.execution_status != "success":
+            return None, "unavailable"
+        decision = FollowUpDecisionParser.parse_strict(result.raw_text)
         return (decision, "valid") if decision is not None else (None, "invalid")
 
     @classmethod

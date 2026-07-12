@@ -104,7 +104,34 @@ class _RoundExecutor(_Executor):
         self.execute_calls.append(
             (list(entries), tenant, round_spec, bypass_cache, progress),
         )
-        return self.results_by_stage[round_spec.stage_name]
+        requested_ids = {entry.unique_id for entry in entries}
+        return {
+            unique_id: result
+            for unique_id, result in self.results_by_stage[round_spec.stage_name].items()
+            if unique_id in requested_ids
+        }
+
+
+class _SequencedRoundExecutor(_Executor):
+    def __init__(self, results_by_stage) -> None:
+        super().__init__({})
+        self.results_by_stage = {
+            stage: list(results) for stage, results in results_by_stage.items()
+        }
+
+    def execute(
+        self,
+        entries,
+        tenant,
+        round_spec,
+        *,
+        bypass_cache=False,
+        progress=None,
+    ) -> dict[str, RoundExecutionResult]:
+        self.execute_calls.append(
+            (list(entries), tenant, round_spec, bypass_cache, progress),
+        )
+        return self.results_by_stage[round_spec.stage_name].pop(0)
 
 
 def _decision(value: bool, reason: str = "A reason") -> RoundExecutionResult:
@@ -369,11 +396,20 @@ def test_only_valid_primary_positives_are_sent_to_verification_as_original_entri
         verification_spec=_verification_spec(),
     )
 
-    verification_entries = executor.execute_calls[1][0]
+    verification_entries = next(
+        call[0]
+        for call in executor.execute_calls
+        if call[2].stage_name == "verification"
+    )
     assert verification_entries == [entries[0]]
     assert verification_entries[0] is entries[0]
-    assert not hasattr(executor.execute_calls[1][2], "primary_raw_text")
-    assert not hasattr(executor.execute_calls[1][2], "primary_decision_text")
+    verification_call = next(
+        call
+        for call in executor.execute_calls
+        if call[2].stage_name == "verification"
+    )
+    assert not hasattr(verification_call[2], "primary_raw_text")
+    assert not hasattr(verification_call[2], "primary_decision_text")
 
 
 def test_parsing_compatibility_is_limited_to_cached_primary_in_off_mode(tenant) -> None:
@@ -579,8 +615,10 @@ def test_partial_primary_progress_uses_orchestrator_counts_and_synthesizes_once(
             bypass_cache=False,
             progress=None,
         ) -> dict[str, RoundExecutionResult]:
-            del tenant, bypass_cache, round_spec
+            del tenant, round_spec
             assert progress is not None
+            if bypass_cache:
+                return {}
             progress("second", _decision(False, "callback"), 99, 100)
             return {
                 "second": _decision(False, "returned second"),
@@ -621,10 +659,12 @@ def test_partial_verification_progress_uses_orchestrator_counts_and_synthesizes_
             bypass_cache=False,
             progress=None,
         ) -> dict[str, RoundExecutionResult]:
-            del tenant, bypass_cache
+            del tenant
             if round_spec.stage_name == "primary":
                 return {entry.unique_id: _decision(True) for entry in entries}
             assert progress is not None
+            if bypass_cache:
+                return {}
             progress("third", _decision(False, "callback"), 50, 50)
             return {
                 "third": _decision(True, "returned third"),
@@ -667,3 +707,187 @@ def test_progress_callback_exceptions_are_logged_and_ignored(tenant, caplog) -> 
 
     assert result.items[0].final_decision is False
     assert "progress callback failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("initial", "terminal", "expected_status"),
+    [
+        (_error(), _error(), "error"),
+        (None, None, "error"),
+        (_success("not json"), _success("still not json"), "invalid"),
+    ],
+    ids=["error", "missing", "invalid"],
+)
+def test_primary_failure_retries_only_affected_entry_once_and_keeps_successes(
+    tenant,
+    initial,
+    terminal,
+    expected_status,
+) -> None:
+    initial_results = {"good": _decision(False, "unchanged")}
+    retry_results = {}
+    if initial is not None:
+        initial_results["bad"] = initial
+    if terminal is not None:
+        retry_results["bad"] = terminal
+    executor = _SequencedRoundExecutor(
+        {"primary": [initial_results, retry_results]},
+    )
+
+    result = BatchAnalysisOrchestrator(executor).run(
+        [_entry("good"), _entry("bad")], tenant, _round_spec(),
+    )
+
+    assert len(executor.execute_calls) == 2
+    assert [entry.unique_id for entry in executor.execute_calls[1][0]] == ["bad"]
+    assert executor.execute_calls[0][3] is False
+    assert executor.execute_calls[1][3] is True
+    assert result.items[0].primary.raw_text == _decision(False, "unchanged").raw_text
+    assert result.items[0].final_decision is False
+    assert result.items[1].final_status == expected_status
+    assert result.items[1].final_decision is None
+    assert result.items[1].verification is None
+
+
+@pytest.mark.parametrize(
+    ("initial", "terminal"),
+    [
+        (_error(), _error()),
+        (None, None),
+        (_success("not json"), _success("still not json")),
+    ],
+    ids=["error", "missing", "invalid"],
+)
+def test_verification_failure_retries_once_then_uses_safe_fallback(
+    tenant,
+    initial,
+    terminal,
+) -> None:
+    verification_initial = {"good": _decision(False, "verified")}
+    verification_retry = {}
+    if initial is not None:
+        verification_initial["bad"] = initial
+    if terminal is not None:
+        verification_retry["bad"] = terminal
+    executor = _SequencedRoundExecutor(
+        {
+            "primary": [{"good": _decision(True), "bad": _decision(True)}],
+            "verification": [verification_initial, verification_retry],
+        },
+    )
+
+    result = BatchAnalysisOrchestrator(executor).run(
+        [_entry("good"), _entry("bad")], tenant, _round_spec(),
+        verification_mode="enforce", verification_spec=_verification_spec(),
+    )
+
+    assert len(executor.execute_calls) == 3
+    assert [entry.unique_id for entry in executor.execute_calls[2][0]] == ["bad"]
+    assert executor.execute_calls[2][3] is True
+    assert result.items[0].final_decision is False
+    assert result.items[1].final_decision is True
+    assert result.items[1].final_status == "fallback"
+    assert result.items[1].verification_status == "failed"
+
+
+@pytest.mark.parametrize(
+    ("mode", "from_cache", "expected_calls"),
+    [
+        ("off", True, 1),
+        ("off", False, 2),
+        ("shadow", True, 2),
+        ("enforce", True, 2),
+    ],
+)
+def test_legacy_primary_retry_depends_on_cache_history_and_mode(
+    tenant,
+    mode,
+    from_cache,
+    expected_calls,
+) -> None:
+    legacy = replace(
+        _success("Needs follow-up: No\nSummary: resolved"),
+        from_cache=from_cache,
+    )
+    sequences = [{"one": legacy}]
+    if expected_calls == 2:
+        sequences.append({"one": _decision(False, "strict")})
+    executor = _SequencedRoundExecutor({"primary": sequences})
+
+    item = BatchAnalysisOrchestrator(executor).run(
+        [_entry("one")], tenant, _round_spec(), verification_mode=mode,
+        verification_config_error=("not configured" if mode != "off" else None),
+    ).items[0]
+
+    assert len(executor.execute_calls) == expected_calls
+    assert item.primary_decision_status == "valid"
+    if expected_calls == 2:
+        assert executor.execute_calls[1][3] is True
+        assert item.primary.raw_text == _decision(False, "strict").raw_text
+
+
+def test_validation_is_recorded_after_each_parse_and_retry_overwrites_invalid(
+    tenant,
+) -> None:
+    executor = _SequencedRoundExecutor(
+        {
+            "primary": [
+                {"invalid": _success("bad"), "valid": _decision(False)},
+                {"invalid": _decision(False, "repaired")},
+            ],
+        },
+    )
+
+    BatchAnalysisOrchestrator(executor).run(
+        [_entry("invalid"), _entry("valid")], tenant, _round_spec(),
+    )
+
+    assert executor.validation_calls == [
+        (_round_spec(), {"invalid": False, "valid": True}),
+        (_round_spec(), {"invalid": True}),
+    ]
+
+
+def test_error_and_missing_validation_are_never_acknowledged_as_valid(tenant) -> None:
+    executor = _SequencedRoundExecutor(
+        {
+            "primary": [
+                {"error": _error()},
+                {"error": _error()},
+            ],
+        },
+    )
+
+    BatchAnalysisOrchestrator(executor).run(
+        [_entry("error"), _entry("missing")], tenant, _round_spec(),
+    )
+
+    assert executor.validation_calls == [
+        (_round_spec(), {"error": False, "missing": False}),
+        (_round_spec(), {"error": False, "missing": False}),
+    ]
+
+
+def test_retry_progress_rejects_an_id_not_requested_for_that_attempt(tenant) -> None:
+    class BadRetryProgressExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant, round_spec
+            assert progress is not None
+            if not bypass_cache:
+                return {"good": _decision(False), "bad": _error()}
+            progress("good", _decision(False), 1, 1)
+            return {"bad": _decision(False)}
+
+    with pytest.raises(BatchExecutorContractError, match="unrequested.*good"):
+        BatchAnalysisOrchestrator(BadRetryProgressExecutor({})).run(
+            [_entry("good"), _entry("bad")], tenant, _round_spec(),
+            progress=lambda event: None,
+        )
