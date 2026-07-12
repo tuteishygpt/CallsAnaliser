@@ -4,11 +4,10 @@ Defaults to processing "yesterday's" calls.
 """
 import argparse
 import datetime
-import json
 import logging
-import os
 import sys
-from typing import Any, List, Optional
+from types import SimpleNamespace
+from typing import Any, Optional
 from dotenv import load_dotenv
 import pandas as pd
 
@@ -21,12 +20,11 @@ logger = logging.getLogger("daily_batch")
 try:
     from calls_analyser.ui.dependencies import build_dependencies
     from calls_analyser.ui import utils
-    from calls_analyser.services.gemini_batch import VertexBatchRunner, BatchTask, guess_mime_type
-    from calls_analyser.services.batch_results import build_error_row, build_success_row
-    from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
-    from calls_analyser.domain.models import AnalysisResult, Language
-    from calls_analyser.services.analysis import CacheKey
-    from calls_analyser.services.usage import extract_usage_metadata
+    from calls_analyser.services.gemini_batch import VertexBatchRunner
+    from calls_analyser.services.batch_executors import VertexBatchExecutor
+    from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator
+    from calls_analyser.services.batch_results import build_batch_item_row
+    from calls_analyser.services.tenant_settings import TenantRuntimeSettings
     # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
     # If run directly from outside the package context without installation
@@ -81,27 +79,6 @@ def get_target_date(date_str: str | None) -> datetime.date:
         return datetime.date.today() - datetime.timedelta(days=1)
 
 
-def _get_cached_results(cache, cache_keys: list[CacheKey]) -> dict[CacheKey, AnalysisResult]:  # noqa: ANN001
-    get_many = getattr(cache, "get_many", None)
-    if callable(get_many):
-        try:
-            return dict(get_many(cache_keys))
-        except Exception as e:
-            logger.warning(f"Bulk cache lookup failed: {e}. Continuing with uncached items.")
-            return {}
-
-    cached_results: dict[CacheKey, AnalysisResult] = {}
-    for cache_key in cache_keys:
-        try:
-            cached_result = cache.get(cache_key)
-        except Exception as e:
-            logger.warning(f"Cache lookup failed for {cache_key[1]}: {e}")
-            continue
-        if cached_result:
-            cached_results[cache_key] = cached_result
-    return cached_results
-
-
 def _has_runtime_value(value: object) -> bool:
     if value is None:
         return False
@@ -151,54 +128,50 @@ def _display_filter_value(value: object) -> str:
     return str(value) if _has_runtime_value(value) else "All"
 
 
-def _runtime_language_or_default(runtime_settings: Any | None, default_language: object) -> object:
-    language_code = getattr(runtime_settings, "batch_language_code", None)
-    if not _has_runtime_value(language_code):
-        return default_language
+def _orchestrator_settings(
+    deps: Any,
+    runtime_settings: Any | None,
+) -> TenantRuntimeSettings:
+    """Return complete settings even for legacy dependency fixtures."""
+    return TenantRuntimeSettings(
+        batch_model_key=_runtime_str_or_default(
+            getattr(runtime_settings, "batch_model_key", None), deps.batch_model_key,
+        ),
+        batch_language_code=_runtime_str_or_default(
+            getattr(runtime_settings, "batch_language_code", None),
+            getattr(deps.batch_language, "value", deps.batch_language),
+        ),
+        batch_enabled=bool(getattr(runtime_settings, "batch_enabled", True)),
+        batch_size=_runtime_int_or_default(
+            getattr(runtime_settings, "batch_size", None), deps.batch_params.batch_size,
+        ),
+        follow_up_verification_mode=getattr(
+            runtime_settings, "follow_up_verification_mode", "off",
+        ),
+        follow_up_verification_model_key=getattr(
+            runtime_settings, "follow_up_verification_model_key", "",
+        ),
+        follow_up_verification_prompt_key=getattr(
+            runtime_settings, "follow_up_verification_prompt_key", "",
+        ),
+        scheduler_filters=dict(getattr(runtime_settings, "scheduler_filters", {}) or {}),
+    )
 
-    normalized = str(getattr(language_code, "value", language_code)).strip()
-    if normalized.lower() in {"auto", "default"}:
-        return Language.AUTO
-    try:
-        return Language(normalized)
-    except ValueError:
-        logger.warning(
-            "Invalid tenant batch language %r. Falling back to configured batch language.",
-            normalized,
+
+class _SchedulerPromptService:
+    def __init__(self, deps: Any) -> None:
+        self._deps = deps
+
+    def get_prompt(self, key: str, *, tenant_id: str | None = None) -> Any:
+        template = self._deps.prompt_service.get_prompt(key, tenant_id=tenant_id)
+        body = getattr(template, "body", None)
+        if not isinstance(body, str) or not body.strip():
+            body = self._deps.batch_prompt_text if key == self._deps.batch_prompt_key else ""
+        return SimpleNamespace(
+            key=getattr(template, "key", key),
+            version=getattr(template, "version", 1),
+            body=body,
         )
-        return default_language
-
-
-def _resolve_batch_prompt_text_and_version(deps: Any, tenant: Any) -> tuple[str, int]:
-    fallback_text = getattr(deps, "batch_prompt_text", None) or ""
-    prompt_version = 1
-    prompt_service = getattr(deps, "prompt_service", None)
-    get_prompt = getattr(prompt_service, "get_prompt", None)
-    if not callable(get_prompt):
-        return fallback_text, prompt_version
-
-    try:
-        prompt_template = get_prompt(
-            deps.batch_prompt_key,
-            tenant_id=tenant.tenant_id,
-        )
-    except Exception as e:
-        logger.warning(
-            "Failed to resolve batch prompt for tenant %s: %s. Falling back to configured prompt text.",
-            tenant.tenant_id,
-            e,
-        )
-        return fallback_text, prompt_version
-
-    prompt_version = getattr(prompt_template, "version", prompt_version)
-    prompt_body = getattr(prompt_template, "body", None)
-    if isinstance(prompt_body, str) and prompt_body.strip():
-        return prompt_body, prompt_version
-    if prompt_body is not None and not isinstance(prompt_body, str):
-        prompt_body_text = str(prompt_body)
-        if prompt_body_text.strip():
-            return prompt_body_text, prompt_version
-    return fallback_text, prompt_version
 
 
 def run_batch_process(
@@ -233,15 +206,6 @@ def run_batch_process(
         logger.warning("Gemini batch is disabled for tenant %s.", tenant.tenant_id)
         return
 
-    batch_model_key = _runtime_str_or_default(
-        getattr(runtime_settings, "batch_model_key", None),
-        deps.batch_model_key,
-    )
-    batch_size = _runtime_int_or_default(
-        getattr(runtime_settings, "batch_size", None),
-        deps.batch_params.batch_size,
-    )
-    batch_language = _runtime_language_or_default(runtime_settings, deps.batch_language)
     time_from_value = _runtime_filter_or_arg(runtime_settings, "time_from", time_from_str)
     time_to_value = _runtime_filter_or_arg(runtime_settings, "time_to", time_to_str)
     call_type_value = _runtime_filter_or_arg(runtime_settings, "call_type", call_type_str)
@@ -283,178 +247,50 @@ def run_batch_process(
 
     logger.info(f"Found {len(entries)} calls.")
 
-    # Build prompt
-    lang_instruction = GeminiAIAdapter._system_instruction(batch_language)
-    prompt_text, prompt_version = _resolve_batch_prompt_text_and_version(deps, tenant)
-    merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
-    
-    provider = deps.ai_registry.get(batch_model_key)
-    if not provider:
-        logger.error(f"Model {batch_model_key} not found in registry.")
-        return
-
-    provider_name = getattr(provider, "provider_name", batch_model_key)
-    custom_fragment = "" 
-
-    tasks: List[BatchTask] = []
-    task_indices: List[int] = []
-    result_text_by_id: dict[str, str] = {}
-    error_by_id: dict[str, str] = {}
-
-    cache_entries: list[tuple[int, object, CacheKey]] = []
-    for idx, entry in enumerate(entries):
-        cache_entries.append(
-            (
-                idx,
-                entry,
-                (
-                    tenant.tenant_id,
-                    entry.unique_id,
-                    deps.batch_prompt_key,
-                    prompt_version,
-                    provider_name,
-                    batch_model_key,
-                    custom_fragment,
-                ),
-            )
-        )
-    cached_results = _get_cached_results(
-        deps.analysis_service._cache,
-        [cache_key for _, _, cache_key in cache_entries],
+    settings = _orchestrator_settings(deps, runtime_settings)
+    analysis_service = deps.analysis_service
+    analysis_service._call_log_service = deps.call_log_service
+    analysis_service._usage_tracker = getattr(deps, "usage_tracker", None)
+    if not callable(getattr(analysis_service, "persist_cached_result", None)):
+        def persist_cached_result(cache_key, result):  # noqa: ANN001
+            set_item = getattr(analysis_service._cache, "__setitem__", None)
+            if callable(set_item):
+                set_item(cache_key, result)
+        analysis_service.persist_cached_result = persist_cached_result
+    executor = VertexBatchExecutor(
+        analysis_service,
+        runner_factory=lambda model: VertexBatchRunner(model=model),
+        batch_size_resolver=lambda _tenant: settings.batch_size,
     )
-
-    # Check cache and identify missing
-    cached_count = 0
-    for idx, entry, cache_key in cache_entries:
-        cached_result = cached_results.get(cache_key)
-
-        if cached_result:
-            cached_count += 1
-            result_text_by_id[entry.unique_id] = cached_result.text
-        else:
-            try:
-                handle = deps.call_log_service.ensure_recording(entry.unique_id, tenant)
-                mime_type = guess_mime_type(handle.local_uri)
-                tasks.append(
-                    BatchTask(
-                        key=entry.unique_id,
-                        path=handle.local_uri,
-                        mime_type=mime_type,
-                    )
-                )
-                task_indices.append(idx)
-            except Exception as e:
-                logger.error(f"Failed to prepare audio for {entry.unique_id}: {e}")
-                error_by_id[entry.unique_id] = f"❌ {e}"
-
-    logger.info(f"Summary: {len(entries)} total. {cached_count} already cached. {len(tasks)} to process.")
-
-    result_map: dict[str, str] = {}
-    usage_by_id: dict[str, object] = {}
-    if tasks:
-        # Run batch via Vertex AI Batch API
-        logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
-        runner = VertexBatchRunner(model=batch_model_key)
-
-        try:
-            run_batch_results = getattr(runner, "run_batch_results", None)
-            if callable(run_batch_results):
-                batch_results = run_batch_results(
-                    tasks,
-                    merged_prompt,
-                    chunk_size=batch_size,
-                )
-                result_map = {
-                    key: getattr(value, "text", str(value))
-                    for key, value in batch_results.items()
-                }
-                usage_by_id = {
-                    key: getattr(value, "usage_metadata", None)
-                    for key, value in batch_results.items()
-                }
-            else:
-                result_map = runner.run_batch(
-                    tasks,
-                    merged_prompt,
-                    chunk_size=batch_size,
-                )
-        except Exception as e:
-            logger.error(f"Batch execution failed: {e}")
-            for task in tasks:
-                error_by_id[task.key] = f"❌ Batch execution failed: {e}"
-    else:
-        logger.info("Nothing new to process; preparing report from cached results.")
-
-    # Process results and save to cache
-    success_count = 0
-    for i, task in enumerate(tasks):
-        original_idx = task_indices[i]
-        entry = entries[original_idx]
-        text_result = result_map.get(entry.unique_id)
-
-        if text_result and not text_result.startswith("Error:"):
-            # Save to cache
-            cache_key = (
-                tenant.tenant_id,
-                entry.unique_id,
-                deps.batch_prompt_key,
-                prompt_version,
-                provider_name,
-                batch_model_key,
-                custom_fragment,
-            )
-            usage_metadata = usage_by_id.get(entry.unique_id)
-            new_result = AnalysisResult(
-                text=text_result,
-                model=batch_model_key,
-                provider=provider_name,
-                metadata={
-                    "batch": True,
-                    **({"usage_metadata": usage_metadata} if usage_metadata else {}),
-                },
-            )
-            deps.analysis_service._cache[cache_key] = new_result
-            usage_tracker = getattr(deps, "usage_tracker", None)
-            if usage_tracker is not None:
-                usage = extract_usage_metadata(usage_metadata)
-                if usage is not None:
-                    usage_tracker.record(
-                        entry=entry,
-                        tenant=tenant,
-                        prompt_key=deps.batch_prompt_key,
-                        custom_fragment=custom_fragment,
-                        provider_name=provider_name,
-                        model_key=batch_model_key,
-                        mode="scheduler_batch",
-                        usage=usage,
-                        cache_key=cache_key,
-                    )
-            result_text_by_id[entry.unique_id] = text_result
-            success_count += 1
-            logger.info(f"Processed {entry.unique_id} successfully.")
-        else:
-            logger.error(f"Failed or error for {entry.unique_id}: {text_result}")
-            error_by_id[entry.unique_id] = text_result or "No result returned."
-
-    logger.info(f"Batch completed. Successfully processed and cached: {success_count}/{len(tasks)}")
-
-    rows = []
-    for entry in entries:
-        if entry.unique_id in result_text_by_id:
-            rows.append(build_success_row(entry, tenant, result_text_by_id[entry.unique_id]))
-        else:
-            rows.append(
-                build_error_row(
-                    entry,
-                    error_by_id.get(entry.unique_id, "No result returned."),
-                )
-            )
-    results_df = pd.DataFrame(rows)
-
+    orchestrator = BatchAnalysisOrchestrator(
+        executor,
+        prompt_service=_SchedulerPromptService(deps),
+        ai_registry=deps.ai_registry,
+    )
+    run_result = orchestrator.run_with_settings(
+        entries,
+        tenant,
+        settings,
+        primary_prompt_key=deps.batch_prompt_key,
+        primary_usage_mode="scheduler_batch",
+        verification_usage_mode="scheduler_batch_verify",
+    )
+    logger.info(
+        "Batch counters: total=%d round_1_success=%d verification_requested=%d "
+        "verification_success=%d verification_changed_to_false=%d "
+        "verification_failed=%d final_follow_up=%d",
+        run_result.total, run_result.round_1_success,
+        run_result.verification_requested, run_result.verification_success,
+        run_result.verification_changed_to_false, run_result.verification_failed,
+        run_result.final_follow_up,
+    )
+    results_df = pd.DataFrame(
+        [build_batch_item_row(item, tenant) for item in run_result.items],
+    )
     email_report_service = getattr(deps, "email_report_service", None)
     if email_report_service is not None:
-        if not result_text_by_id:
-            logger.warning("Email report skipped: no successful batch results to send.")
+        if run_result.round_1_success == 0:
+            logger.warning("Email report skipped: no valid primary decisions to send.")
         else:
             try:
                 email_report_service.send(
@@ -468,7 +304,6 @@ def run_batch_process(
                 logger.error(f"Email report failed: {e}")
     else:
         logger.warning("Email report skipped: BREVO_API_KEY or GOOGLE_app is not configured.")
-
     return results_df
 
 
