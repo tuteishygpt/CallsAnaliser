@@ -203,3 +203,12 @@ def test_recording_link_rejects_non_http_scheme() -> None:
     row = build_batch_item_row(replace(_item(), entry=entry), TENANT)
 
     assert row["Link"] == ""
+
+
+@pytest.mark.parametrize("url", ["http://[", "https:///recording/call-1"])
+def test_recording_link_rejects_malformed_or_hostless_http_url(url: str) -> None:
+    entry = _item().entry.model_copy(update={"raw": {"recording_url": url}})
+
+    row = build_batch_item_row(replace(_item(), entry=entry), TENANT)
+
+    assert row["Link"] == ""

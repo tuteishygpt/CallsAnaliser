@@ -40,7 +40,16 @@ def _yes_no(value: bool | None) -> str:
 
 
 def _recording_link(url: str) -> str:
-    if urlsplit(url).scheme.lower() not in {"http", "https"}:
+    try:
+        parsed = urlsplit(url)
+        valid = (
+            parsed.scheme.lower() in {"http", "https"}
+            and bool(parsed.netloc)
+            and bool(parsed.hostname)
+        )
+    except ValueError:
+        return ""
+    if not valid:
         return ""
     return f'<a href="{escape(url, quote=True)}" target="_blank">Listen</a>'
 
