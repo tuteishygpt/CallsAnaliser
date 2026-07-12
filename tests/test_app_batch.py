@@ -15,6 +15,14 @@ os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 
 import app
 from calls_analyser.ui import utils
+from calls_analyser.domain.models import AnalysisResult
+from calls_analyser.services.batch_executors import SequentialBatchExecutor
+from calls_analyser.services.batch_orchestrator import (
+    BatchAnalysisOrchestrator,
+    RoundExecutionResult,
+)
+from calls_analyser.services.prompt import PromptService, PromptTemplate
+from calls_analyser.services.tenant_settings import TenantRuntimeSettings
 
 
 class _StubTenantService:
@@ -45,6 +53,20 @@ class _StubAnalysisService:
             raise response
         return SimpleNamespace(text=response)
 
+    def analyze_call_with_status(self, unique_id, tenant, lang, options):  # noqa: ANN001
+        result = self.analyze_call(unique_id, tenant, lang, options)
+        return AnalysisResult(
+            text=result.text,
+            model=options.model_key,
+            provider="test-provider",
+        ), False, (
+            tenant.tenant_id, unique_id, options.prompt_key, 1, "test-provider",
+            options.model_key, (options.custom_prompt or "").strip(),
+        )
+
+    def persist_cached_result(self, _key, _result) -> None:  # noqa: ANN001
+        return None
+
 
 class _RecordingEmailReportService:
     def __init__(self) -> None:
@@ -52,6 +74,33 @@ class _RecordingEmailReportService:
 
     def send(self, results, **kwargs) -> None:  # noqa: ANN001
         self.calls.append((results.copy(), kwargs))
+
+
+class _RecordingRoundExecutor:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def execute(self, entries, tenant, round_spec, *, bypass_cache=False, progress=None):  # noqa: ANN001
+        self.calls.append((round_spec, [entry.unique_id for entry in entries], bypass_cache))
+        texts = {
+            "primary": {
+                "call-1": '{"needs_follow_up": true, "reason": "Initial callback"}',
+                "call-2": '{"needs_follow_up": false, "reason": "Resolved"}',
+            },
+            "verification": {
+                "call-1": '{"needs_follow_up": false, "reason": "No callback after review"}',
+            },
+        }
+        results = {}
+        for completed, entry in enumerate(entries, 1):
+            result = RoundExecutionResult(raw_text=texts[round_spec.stage_name][entry.unique_id])
+            results[entry.unique_id] = result
+            if progress is not None:
+                progress(entry.unique_id, result, completed, len(entries))
+        return results
+
+    def record_validation(self, _round_spec, _validated_results) -> None:  # noqa: ANN001
+        return None
 
 
 def _configure_batch_environment(
@@ -81,6 +130,26 @@ def _configure_batch_environment(
     if responses is not None:
         analysis = _StubAnalysisService(responses)
         monkeypatch.setattr(app, "analysis_service", analysis)
+        executor = SequentialBatchExecutor(analysis)
+        prompt_service = PromptService({
+            "batch": PromptTemplate("batch", "Batch", "Primary", 1),
+            "simple": PromptTemplate("simple", "Simple", "Primary", 1),
+        })
+        orchestrator = BatchAnalysisOrchestrator(
+            executor,
+            prompt_service=prompt_service,
+            ai_registry={"fake-model": SimpleNamespace(provider_name="test-provider")},
+        )
+        monkeypatch.setattr(app.handlers.deps, "batch_orchestrator", orchestrator)
+        monkeypatch.setattr(
+            app.handlers.deps,
+            "tenant_settings_service",
+            SimpleNamespace(resolve=lambda _tenant_id: TenantRuntimeSettings(
+                batch_model_key="fake-model",
+                batch_language_code="en",
+                follow_up_verification_mode="off",
+            )),
+        )
 
     return tenant, analysis
 
@@ -153,30 +222,32 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     assert initial_filter["visible"] is False
 
     partial_df_update, partial_state, partial_message, _, partial_filter = result[1]
-    assert "Analyzing 1/2" in partial_message
+    assert "Primary analysis 1/2" in partial_message
     assert partial_filter["visible"] is False
     partial_df = partial_df_update["value"]
     assert "UniqueId" not in partial_df.columns
     assert list(partial_state["UniqueId"]) == ["call-1"]
-    assert list(partial_df["Status"]) == ["✅"]
-    assert list(partial_df["Needs follow-up"]) == ["Yes"]
-    assert list(partial_df["Reason"]) == ["Schedule callback"]
+    assert list(partial_df["Status"]) == ["⏳ Primary analysis"]
+    assert list(partial_df["Needs follow-up"]) == [""]
+    assert list(partial_df["Reason"]) == [""]
     assert partial_df.iloc[0]["Link"] == (
         "<a href=\"https://bot.example/permanent/call-1\" target=\"_blank\">Listen</a>"
     )
 
     error_df_update, error_state, error_message, _, error_filter = result[2]
-    assert "Analyzing 2/2" in error_message
+    assert "Primary analysis 2/2" in error_message
     assert error_filter["visible"] is False
     error_df = error_df_update["value"]
     assert "UniqueId" not in error_df.columns
     assert list(error_state["UniqueId"]) == ["call-1", "call-2"]
-    assert list(error_df["Status"]) == ["✅", "❌"]
-    assert error_df.iloc[1]["Reason"].startswith("❌ network down")
-    assert error_df.iloc[1]["Link"] == ""
+    assert list(error_df["Status"]) == ["⏳ Primary analysis", "⏳ Primary analysis"]
+    assert error_df.iloc[1]["Reason"] == ""
+    assert "recording/call-2" in error_df.iloc[1]["Link"]
 
     final_df_update, final_state, final_message, final_file, final_filter = result[3]
-    assert final_message == "## ✅ Batch analysis completed. Found: 2, processed successfully: 1"
+    assert "total: 2" in final_message
+    assert "round 1 success: 1" in final_message
+    assert "final follow-up: 1" in final_message
     final_df = final_df_update["value"]
     assert isinstance(final_df, pd.DataFrame)
     assert "UniqueId" not in final_df.columns
@@ -186,10 +257,82 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     assert final_filter["visible"] is True
 
     assert analysis is not None
-    assert [call[0] for call in analysis.calls] == ["call-1", "call-2"]
+    assert [call[0] for call in analysis.calls] == ["call-1", "call-2", "call-2"]
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
+
+
+def test_ui_mass_analyze_uses_tenant_settings_and_projects_two_pass_audit(monkeypatch) -> None:
+    entries = [
+        SimpleNamespace(
+            started_at=dt.datetime(2024, 2, 15, 9, 30), caller_id="Alice",
+            destination="Support", duration_seconds=123, unique_id="call-1", raw={},
+        ),
+        SimpleNamespace(
+            started_at=dt.datetime(2024, 2, 15, 10, 0), caller_id="Bob",
+            destination="Sales", duration_seconds=45, unique_id="call-2", raw={},
+        ),
+    ]
+    tenant, _analysis = _configure_batch_environment(monkeypatch, entries=entries)
+    registry = {
+        "tenant-primary": SimpleNamespace(provider_name="primary-provider"),
+        "tenant-verifier": SimpleNamespace(provider_name="verify-provider"),
+    }
+    monkeypatch.setattr(app, "ai_registry", registry)
+    monkeypatch.setattr(app, "BATCH_MODEL_KEY", "tenant-primary")
+    prompt_service = PromptService({
+        "batch": PromptTemplate("batch", "Batch", "Primary", 2),
+        "verify": PromptTemplate("verify", "Verify", "Independent verification", 3),
+        "simple": PromptTemplate("simple", "Simple", "Primary", 1),
+    })
+    executor = _RecordingRoundExecutor()
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "batch_orchestrator",
+        BatchAnalysisOrchestrator(executor, prompt_service=prompt_service, ai_registry=registry),
+    )
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "tenant_settings_service",
+        SimpleNamespace(resolve=lambda _tenant_id: TenantRuntimeSettings(
+            batch_model_key="tenant-primary",
+            batch_language_code="de",
+            follow_up_verification_mode="enforce",
+            follow_up_verification_model_key="tenant-verifier",
+            follow_up_verification_prompt_key="verify",
+        )),
+    )
+
+    yields = list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert [(call[0].stage_name, call[1]) for call in executor.calls] == [
+        ("primary", ["call-1", "call-2"]),
+        ("verification", ["call-1"]),
+    ]
+    assert executor.calls[0][0].model_key == "tenant-primary"
+    assert executor.calls[0][0].language == "de"
+    assert executor.calls[1][0].model_key == "tenant-verifier"
+    assert any(
+        "Verification" in message
+        and state.loc[state["UniqueId"] == "call-1", "Needs follow-up"].iloc[0] == ""
+        for _, state, message, _, _ in yields[1:-1]
+        if not state.empty
+    )
+
+    _, final_state, final_message, _, _ = yields[-1]
+    row = final_state.loc[final_state["UniqueId"] == "call-1"].iloc[0]
+    assert row["Initial needs follow-up"] == "Yes"
+    assert row["Initial reason"] == "Initial callback"
+    assert row["Verification needs follow-up"] == "No"
+    assert row["Verification reason"] == "No callback after review"
+    assert row["Verification status"] == "complete"
+    assert row["Needs follow-up"] == "No"
+    assert app.handlers.filter_batch_results("Needs follow-up", final_state).empty
+    assert "verification requested: 1" in final_message
+    assert "verification success: 1" in final_message
+    assert "changed to no follow-up: 1" in final_message
+    assert "final follow-up: 0" in final_message
 
 
 def test_send_results_email_uses_selected_filter_and_full_results(monkeypatch) -> None:

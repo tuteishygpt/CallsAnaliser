@@ -28,6 +28,8 @@ try:  # pragma: no cover - optional imports
     from calls_analyser.domain.exceptions import CallsAnalyserError
     from calls_analyser.ports.ai import AIModelPort
     from calls_analyser.services.analysis import AnalysisOptions, AnalysisService
+    from calls_analyser.services.batch_executors import SequentialBatchExecutor
+    from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator
     from calls_analyser.services.cache import FileBackedCache
     from calls_analyser.services.call_log import CallLogService
     from calls_analyser.services.email_report import EmailReportService
@@ -55,6 +57,8 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     AnalysisOptions = None  # type: ignore
     AnalysisOptions = None  # type: ignore
     AnalysisService = None  # type: ignore
+    SequentialBatchExecutor = None  # type: ignore
+    BatchAnalysisOrchestrator = None  # type: ignore
     FileBackedCache = None  # type: ignore
     CallLogService = None  # type: ignore
     EmailReportService = None  # type: ignore
@@ -103,6 +107,8 @@ class AppDependencies:
     batch_params: BatchParams
     auth_service: Any = None
     tenant_settings_service: Any = None
+    sequential_batch_executor: Any = None
+    batch_orchestrator: Any = None
 
 
 MODEL_PLACEHOLDER_CHOICE = (
@@ -343,6 +349,8 @@ def build_dependencies() -> AppDependencies:
             batch_params=batch_params,
             auth_service=auth_service,
             tenant_settings_service=tenant_settings_service,
+            sequential_batch_executor=None,
+            batch_orchestrator=None,
         )
 
     secrets_adapter = EnvSecretsAdapter()
@@ -385,6 +393,12 @@ def build_dependencies() -> AppDependencies:
         cache=cache,
         usage_tracker=usage_tracker,
     )
+    sequential_batch_executor = SequentialBatchExecutor(analysis_service)
+    batch_orchestrator = BatchAnalysisOrchestrator(
+        sequential_batch_executor,
+        prompt_service=prompt_service,
+        ai_registry=ai_registry,
+    )
     email_report_service = _build_email_report_service()
 
     model_options = _build_model_options(ai_registry)
@@ -426,4 +440,6 @@ def build_dependencies() -> AppDependencies:
         batch_params=batch_params,
         auth_service=auth_service,
         tenant_settings_service=tenant_settings_service,
+        sequential_batch_executor=sequential_batch_executor,
+        batch_orchestrator=batch_orchestrator,
     )

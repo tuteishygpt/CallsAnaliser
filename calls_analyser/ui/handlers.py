@@ -15,8 +15,8 @@ from . import config
 from .dependencies import AppDependencies, AnalysisOptions
 from . import utils
 from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
-from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult
+from calls_analyser.services.batch_results import build_batch_item_row
 from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner, guess_mime_type
 from calls_analyser.services.usage_report import (
     ALL_VALUE,
@@ -44,9 +44,9 @@ class UIHandlers:
                 lines = lines[1:]
             text_clean = "\n".join(lines).strip()
         try:
-            l, r = text_clean.find("{"), text_clean.rfind("}")
-            if l != -1 and r != -1 and r > l:
-                text_clean = text_clean[l : r + 1]
+            left, right = text_clean.find("{"), text_clean.rfind("}")
+            if left != -1 and right != -1 and right > left:
+                text_clean = text_clean[left : right + 1]
             payload = json.loads(text_clean)
             needs_follow_up = payload.get("needs_follow_up")
             needs_str = "Yes" if needs_follow_up else "No"
@@ -847,7 +847,6 @@ class UIHandlers:
     def open_custom_prompt(self, stored_conditions: str):
         """Паказаць акно з умовамі для кастомнага батча."""
         clean_value = (stored_conditions or "").strip()
-        preview = self.build_custom_batch_prompt(clean_value)
         return (
             gr.update(value=clean_value),
             gr.update(visible=True),
@@ -1002,6 +1001,13 @@ class UIHandlers:
                 return
 
             total = len(entries)
+            settings_service = self.deps.tenant_settings_service
+            orchestrator = self.deps.batch_orchestrator
+            if settings_service is None or orchestrator is None:
+                raise RuntimeError("Batch orchestration is not configured.")
+            settings = settings_service.resolve(tenant.tenant_id)
+            if settings.batch_model_key not in self.deps.ai_registry:
+                raise RuntimeError("Batch analysis is unavailable: AI model is not configured.")
             prompt_override = custom_prompt_override
             # Removed forcing prompt_override to self.deps.batch_prompt_text when None
             # to allow AnalysisService to use default prompt logic (custom_fragment="")
@@ -1015,10 +1021,69 @@ class UIHandlers:
                 hidden_filter,
             )
 
-            # UI always uses sequential mode (one-by-one generate_content).
-            # Vertex Batch API is only used by runner.py / scheduler.
+            items_by_id = {}
+            snapshots = []
 
-            rows = []
+            def capture_progress(event):  # noqa: ANN001
+                if event.unique_id is None:
+                    return
+                if event.item is not None:
+                    items_by_id[event.unique_id] = event.item
+                elif event.unique_id not in items_by_id:
+                    return
+                rows = [
+                    build_batch_item_row(items_by_id[entry.unique_id], tenant)
+                    for entry in entries
+                    if entry.unique_id in items_by_id
+                ]
+                snapshots.append((event, pd.DataFrame(rows)))
+
+            run_result = orchestrator.run_with_settings(
+                entries,
+                tenant,
+                settings,
+                primary_prompt_key=self.deps.batch_prompt_key,
+                primary_custom_prompt=prompt_override or "",
+                primary_usage_mode="ui_mass",
+                verification_usage_mode="ui_mass_verify",
+                progress=capture_progress,
+            )
+
+            for event, partial_df in snapshots:
+                phase = "Verification" if event.stage_name == "verification" else "Primary analysis"
+                interim_msg = f"{phase} {event.completed}/{event.total}... UID `{event.unique_id}`"
+                yield (
+                    gr.update(value=utils.prepare_results_display(partial_df), visible=True),
+                    partial_df,
+                    h3(interim_msg),
+                    hidden_file,
+                    hidden_filter,
+                )
+
+            final_df = pd.DataFrame(
+                [build_batch_item_row(item, tenant) for item in run_result.items],
+            )
+            final_msg = (
+                "Batch analysis completed. "
+                f"total: {run_result.total}, "
+                f"round 1 success: {run_result.round_1_success}, "
+                f"verification requested: {run_result.verification_requested}, "
+                f"verification success: {run_result.verification_success}, "
+                f"changed to no follow-up: {run_result.verification_changed_to_false}, "
+                f"verification failed: {run_result.verification_failed}, "
+                f"final follow-up: {run_result.final_follow_up}"
+            )
+
+            yield (
+                gr.update(value=utils.prepare_results_display(final_df), visible=True),
+                final_df,
+                h2_success(final_msg),
+                hidden_file,
+                visible_filter,
+            )
+            return
+
+            rows = []  # pragma: no cover - legacy path retained temporarily
 
             for i, entry in enumerate(entries, start=1):
                 pct = int((i / total) * 100)

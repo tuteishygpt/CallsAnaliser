@@ -107,6 +107,19 @@ def test_build_dependencies_wires_auth_service_from_env_user(monkeypatch) -> Non
     assert deps.auth_service.authenticate("alice", "wrong-password") is None
 
 
+def test_build_dependencies_wires_ui_batch_orchestration(monkeypatch) -> None:
+    _patch_build_dependencies(monkeypatch)
+
+    deps = dependencies.build_dependencies()
+
+    assert isinstance(deps.sequential_batch_executor, dependencies.SequentialBatchExecutor)
+    assert deps.sequential_batch_executor._analysis_service is deps.analysis_service
+    assert isinstance(deps.batch_orchestrator, dependencies.BatchAnalysisOrchestrator)
+    assert deps.batch_orchestrator._executor is deps.sequential_batch_executor
+    assert deps.batch_orchestrator._prompt_service is deps.prompt_service
+    assert deps.batch_orchestrator._ai_registry is deps.ai_registry
+
+
 def test_build_dependencies_uses_admin_login_for_legacy_ui_password(monkeypatch) -> None:
     _patch_build_dependencies(monkeypatch)
     monkeypatch.setattr(dependencies.config, "DEFAULT_TENANT_ID", "tenant-default")
