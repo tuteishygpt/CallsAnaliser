@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import get_type_hints
 
 import pytest
 
 from calls_analyser.domain.models import CallLogEntry
+from calls_analyser.services.analysis import CacheKey
 from calls_analyser.services.batch_orchestrator import (
     BatchAnalysisOrchestrator,
     BatchExecutorContractError,
@@ -149,6 +151,23 @@ def test_unrequested_executor_ids_raise_contract_error(tenant) -> None:
 def test_round_execution_status_is_a_closed_set(status) -> None:
     with pytest.raises(ValueError, match="execution_status"):
         replace(_success(), execution_status=status)
+
+
+def test_round_execution_result_retains_repository_cache_key() -> None:
+    cache_key: CacheKey = (
+        "tenant-a",
+        "call-1",
+        "follow-up",
+        3,
+        "google",
+        "gemini-primary",
+        "custom fragment",
+    )
+
+    result = replace(_success(), cache_key=cache_key)
+
+    assert result.cache_key is cache_key
+    assert get_type_hints(RoundExecutionResult)["cache_key"] == CacheKey | None
 
 
 @pytest.mark.parametrize(

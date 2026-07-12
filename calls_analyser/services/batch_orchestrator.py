@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from calls_analyser.domain.models import CallLogEntry
+from calls_analyser.services.analysis import CacheKey
 from calls_analyser.services.follow_up import FollowUpDecision
 from calls_analyser.services.tenant import TenantConfig
 
@@ -55,7 +56,7 @@ class RoundExecutionResult:
     from_cache: bool = False
     usage_metadata: Mapping[str, Any] | None = None
     execution_error: str | None = None
-    cache_key: str | None = None
+    cache_key: CacheKey | None = None
     cache_identity: Mapping[str, str] | str | None = None
 
     def __post_init__(self) -> None:
