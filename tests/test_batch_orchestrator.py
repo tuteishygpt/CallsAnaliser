@@ -556,7 +556,9 @@ def test_progress_events_are_deterministic_and_primary_items_remain_pending(tena
     assert callable(executor.execute_calls[1][4])
 
 
-def test_executor_item_progress_is_emitted_before_execute_returns(tenant) -> None:
+def test_executor_item_progress_is_preserved_when_returned_result_is_valid(
+    tenant,
+) -> None:
     events: list[BatchProgressEvent] = []
 
     class LiveExecutor(_Executor):
@@ -577,12 +579,6 @@ def test_executor_item_progress_is_emitted_before_execute_returns(tenant) -> Non
             )
             assert progress is not None
             progress(entries[0].unique_id, result, 1, 1)
-            expected_event = (
-                "primary_complete"
-                if round_spec.stage_name == "primary"
-                else "verification_complete"
-            )
-            assert events[-1].event == expected_event
             return {entries[0].unique_id: result}
 
     result = BatchAnalysisOrchestrator(LiveExecutor({})).run(
@@ -866,6 +862,79 @@ def test_error_and_missing_validation_are_never_acknowledged_as_valid(tenant) ->
         (_round_spec(), {"error": False, "missing": False}),
         (_round_spec(), {"error": False, "missing": False}),
     ]
+
+
+def test_initial_primary_callback_is_reconciled_with_missing_retry_outcome(
+    tenant,
+) -> None:
+    events: list[BatchProgressEvent] = []
+
+    class ConflictingPrimaryExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant, round_spec
+            assert progress is not None
+            if not bypass_cache:
+                progress("one", _decision(False, "premature"), 1, 1)
+            return {}
+
+    result = BatchAnalysisOrchestrator(ConflictingPrimaryExecutor({})).run(
+        [_entry("one")], tenant, _round_spec(), progress=events.append,
+    )
+
+    item_events = [event for event in events if event.event == "primary_complete"]
+    assert len(item_events) == 1
+    assert item_events[0].item.primary.execution_status == "missing"
+    assert item_events[0].item.primary_decision is None
+    assert result.items[0].primary.execution_status == "missing"
+    assert result.items[0].final_status == "error"
+
+
+def test_initial_verification_callback_is_replaced_by_retry_callback_outcome(
+    tenant,
+) -> None:
+    events: list[BatchProgressEvent] = []
+
+    class ConflictingVerificationExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant
+            if round_spec.stage_name == "primary":
+                return {"one": _decision(True, "primary")}
+            assert progress is not None
+            if not bypass_cache:
+                progress("one", _decision(False, "premature"), 1, 1)
+                return {}
+            progress("one", _decision(False, "retry callback"), 1, 1)
+            return {"one": _decision(True, "retry mapping")}
+
+    result = BatchAnalysisOrchestrator(ConflictingVerificationExecutor({})).run(
+        [_entry("one")], tenant, _round_spec(), verification_mode="enforce",
+        verification_spec=_verification_spec(), progress=events.append,
+    )
+
+    item_events = [
+        event for event in events if event.event == "verification_complete"
+    ]
+    assert len(item_events) == 1
+    assert item_events[0].item.verification_decision is not None
+    assert item_events[0].item.verification_decision.needs_follow_up is True
+    assert item_events[0].item.final_reason == "retry mapping"
+    assert result.items[0].final_reason == "retry mapping"
 
 
 def test_retry_progress_rejects_an_id_not_requested_for_that_attempt(tenant) -> None:

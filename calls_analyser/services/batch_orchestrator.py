@@ -392,10 +392,13 @@ class BatchAnalysisOrchestrator:
         progress: ExecutorProgress | None,
     ) -> Mapping[str, RoundExecutionResult]:
         ordered_entries = tuple(entries)
+        buffered_initial_progress: list[tuple[str, int, int]] = []
+
         def progress_for_attempt(
             attempt_entries: Sequence[CallLogEntry],
             *,
             suppress_retryable: bool,
+            buffer: list[tuple[str, int, int]] | None = None,
         ) -> ExecutorProgress | None:
             if progress is None:
                 return None
@@ -421,6 +424,9 @@ class BatchAnalysisOrchestrator:
                 reported_ids.add(unique_id)
                 if suppress_retryable and not self._is_parse_valid(execution, parse):
                     return
+                if buffer is not None:
+                    buffer.append((unique_id, completed, total))
+                    return
                 progress(unique_id, execution, completed, total)
 
             return handle_progress
@@ -433,10 +439,16 @@ class BatchAnalysisOrchestrator:
             progress=progress_for_attempt(
                 ordered_entries,
                 suppress_retryable=True,
+                buffer=buffered_initial_progress,
             ),
         )
         initial_validation = self._validation_mapping(initial, parse)
         self._executor.record_validation(round_spec, initial_validation)
+
+        if progress is not None:
+            for unique_id, completed, total in buffered_initial_progress:
+                if initial_validation[unique_id]:
+                    progress(unique_id, initial[unique_id], completed, total)
 
         retry_entries = tuple(
             entry
@@ -446,6 +458,7 @@ class BatchAnalysisOrchestrator:
         if not retry_entries:
             return initial
 
+        buffered_retry_progress: list[tuple[str, int, int]] = []
         retry = self._execute_once(
             retry_entries,
             tenant,
@@ -454,12 +467,16 @@ class BatchAnalysisOrchestrator:
             progress=progress_for_attempt(
                 retry_entries,
                 suppress_retryable=False,
+                buffer=buffered_retry_progress,
             ),
         )
         self._executor.record_validation(
             round_spec,
             self._validation_mapping(retry, parse),
         )
+        if progress is not None:
+            for unique_id, completed, total in buffered_retry_progress:
+                progress(unique_id, retry[unique_id], completed, total)
         merged = dict(initial)
         merged.update(retry)
         return merged
