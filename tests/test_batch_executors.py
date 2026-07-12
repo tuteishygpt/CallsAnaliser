@@ -331,4 +331,26 @@ def test_vertex_executor_validation_is_durable_and_execution_scoped() -> None:
     validation_writes = cache.writes[2:]
     assert [key[0] for key, _metadata in validation_writes] == ["two", "one"]
     assert [metadata["decision_valid"] for _key, metadata in validation_writes] == [False, True]
-    assert all(metadata["batch_execution"] == "scheduler_vertex" for _key, metadata in validation_writes)
+    assert all(metadata["batch_execution"] == "vertex_batch" for _key, metadata in validation_writes)
+
+
+def test_vertex_executor_turns_runner_construction_failure_into_per_item_errors() -> None:
+    cache = BulkCache()
+    call_log = VertexCallLog()
+    service = make_executor(cache=cache)[0]._analysis_service  # noqa: SLF001
+    service._call_log_service = call_log  # noqa: SLF001
+
+    def unavailable_runner(_model):  # noqa: ANN001, ANN202
+        raise RuntimeError("Vertex unavailable")
+
+    executor = VertexBatchExecutor(service, runner_factory=unavailable_runner)
+
+    results = executor.execute(
+        [CallLogEntry(unique_id="one"), CallLogEntry(unique_id="two")],
+        TenantConfig("tenant", "https://api"),
+        spec(mode="scheduler_batch"),
+    )
+
+    assert set(results) == {"one", "two"}
+    assert all(result.execution_status == "error" for result in results.values())
+    assert all(result.execution_error == "Vertex unavailable" for result in results.values())

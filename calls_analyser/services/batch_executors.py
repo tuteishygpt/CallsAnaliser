@@ -219,10 +219,10 @@ class VertexBatchExecutor:
                 )
 
         if tasks:
-            runner = self._runner_factory(round_spec.model_key)
             instruction = GeminiAIAdapter._system_instruction(Language(round_spec.language))  # noqa: SLF001
             prompt = f"[SYSTEM INSTRUCTION: {instruction}]\n\n{round_spec.prompt_text}".strip()
             try:
+                runner = self._runner_factory(round_spec.model_key)
                 batch_results = runner.run_batch_results(
                     tasks,
                     prompt,
@@ -267,7 +267,7 @@ class VertexBatchExecutor:
                     metadata={
                         "batch": True,
                         "batch_stage": round_spec.stage_name,
-                        "batch_execution": "scheduler_vertex",
+                        "batch_execution": "vertex_batch",
                         "decision_valid": False,
                         **({"usage_metadata": usage_metadata} if usage_metadata else {}),
                     },
@@ -332,7 +332,7 @@ class VertexBatchExecutor:
                 continue
             analysis.metadata.update({
                 "batch_stage": round_spec.stage_name,
-                "batch_execution": "scheduler_vertex",
+                "batch_execution": "vertex_batch",
                 "decision_valid": decision_valid,
             })
             self._analysis_service.persist_cached_result(cache_keys[unique_id], analysis)
