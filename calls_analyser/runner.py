@@ -23,10 +23,7 @@ try:
     from calls_analyser.services.gemini_batch import VertexBatchRunner
     from calls_analyser.services.batch_executors import VertexBatchExecutor
     from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator
-    from calls_analyser.services.batch_results import (
-        INVALID_PRIMARY_REASON,
-        build_batch_item_row,
-    )
+    from calls_analyser.services.batch_results import build_batch_item_row
     from calls_analyser.services.tenant_settings import TenantRuntimeSettings
     # from calls_analyser.domain.exceptions import AIModelError
 except ImportError:
@@ -323,18 +320,20 @@ def run_batch_process(
     for item in run_result.items:
         if item.final_status not in {"error", "invalid"}:
             continue
-        detail = (
-            INVALID_PRIMARY_REASON
-            if item.final_status == "invalid"
-            else item.primary.execution_error or "primary execution failed"
-        )
+        if item.final_status == "invalid":
+            category = "primary_invalid"
+        elif item.primary.execution_status == "missing":
+            category = "primary_missing"
+        else:
+            category = "primary_execution_error"
         logger.warning(
             "Batch item failed: unique_id=%s execution_status=%s "
-            "final_status=%s detail=%s",
+            "final_status=%s decision_status=%s category=%s",
             item.entry.unique_id,
             item.primary.execution_status,
             item.final_status,
-            detail,
+            item.primary_decision_status,
+            category,
         )
     logger.info(
         "Batch counters: total=%d round_1_success=%d verification_requested=%d "

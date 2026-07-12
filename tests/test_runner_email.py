@@ -1045,7 +1045,9 @@ def test_run_batch_logs_terminal_item_failures_without_raw_response(
     class CallLog(_CallLogService):
         def ensure_recording(self, unique_id, _tenant):  # noqa: ANN001
             if unique_id == "prep-id":
-                raise RuntimeError("recording unavailable")
+                raise RuntimeError(
+                    "recording unavailable https://audio.test/call.wav?signature=TOPSECRET",
+                )
             return SimpleNamespace(local_uri=f"{unique_id}.wav")
 
     class TerminalRunner:
@@ -1056,7 +1058,9 @@ def test_run_batch_logs_terminal_item_failures_without_raw_response(
             ids = {task.key for task in tasks}
             results = {}
             if "vertex-id" in ids:
-                results["vertex-id"] = BatchAnalysisResult(text="Error: provider rejected")
+                results["vertex-id"] = BatchAnalysisResult(
+                    text="Error: provider transcript CUSTOMER_SECRET_TOKEN",
+                )
             if "invalid-id" in ids:
                 results["invalid-id"] = BatchAnalysisResult(
                     text="SENSITIVE RAW TRANSCRIPT malformed decision",
@@ -1089,5 +1093,9 @@ def test_run_batch_logs_terminal_item_failures_without_raw_response(
     assert "execution_status=error final_status=error" in caplog.text
     assert "execution_status=missing final_status=error" in caplog.text
     assert "execution_status=success final_status=invalid" in caplog.text
-    assert "could not parse follow-up decision" in caplog.text
+    assert "category=primary_execution_error" in caplog.text
+    assert "category=primary_missing" in caplog.text
+    assert "category=primary_invalid" in caplog.text
+    assert "TOPSECRET" not in caplog.text
+    assert "CUSTOMER_SECRET_TOKEN" not in caplog.text
     assert "SENSITIVE RAW TRANSCRIPT" not in caplog.text
