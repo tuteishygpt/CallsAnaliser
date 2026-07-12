@@ -108,3 +108,23 @@ The Gradio UI provides a **Send by email** button. The selected batch filter
 controls the HTML table, while the CSV remains unfiltered. Scheduled and CLI
 daily batches send `Needs follow-up` rows in the HTML table after processing
 and attach the complete CSV.
+
+### Evaluate follow-up verification
+
+Evaluate a manually labeled saved-call sample before considering `enforce`:
+
+```bash
+python scripts/evaluate_follow_up_verification.py labeled_calls.csv
+```
+
+The UTF-8 CSV requires `manual_label`, `primary_decision`, and `final_decision`.
+It may include `verification_decision`, `verification_status`, and the optional
+resource columns `primary_tokens`, `verification_tokens`, `primary_cost`,
+`verification_cost`, `primary_elapsed_seconds`, and
+`verification_elapsed_seconds`. Boolean values accept `true`/`false`,
+`yes`/`no`, or `1`/`0`.
+
+The command emits JSON confusion matrices, quality deltas, verification rates,
+resource totals, and `eligible_for_enforcement`. This is evaluation evidence
+only: `enforce` remains a tenant configuration decision and is never enabled by
+the tool. A real labeled sample is required for each tenant before enabling it.
