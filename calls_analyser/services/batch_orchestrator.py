@@ -66,6 +66,7 @@ class RoundExecutionResult:
     execution_error: str | None = None
     cache_key: CacheKey | None = None
     cache_identity: Mapping[str, str] | str | None = None
+    execution_id: int | None = None
 
     def __post_init__(self) -> None:
         _validate_status("execution_status", self.execution_status, EXECUTION_STATUSES)
@@ -135,6 +136,14 @@ class BatchProgressEvent:
 
 ExecutorProgress = Callable[[str, RoundExecutionResult, int, int], None]
 BatchProgressCallback = Callable[[BatchProgressEvent], None]
+
+
+class ValidationResults(dict[str, bool]):
+    """Validation flags tied to the concrete executor invocation they describe."""
+
+    def __init__(self, *args: Any, execution_id: int | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.execution_id = execution_id
 
 
 class BatchRoundExecutor(Protocol):
@@ -704,11 +713,17 @@ class BatchAnalysisOrchestrator:
             [RoundExecutionResult],
             tuple[FollowUpDecision | None, str],
         ],
-    ) -> dict[str, bool]:
-        return {
+    ) -> ValidationResults:
+        execution_ids = {
+            result.execution_id
+            for result in results.values()
+            if result.execution_id is not None
+        }
+        execution_id = next(iter(execution_ids)) if len(execution_ids) == 1 else None
+        return ValidationResults({
             unique_id: BatchAnalysisOrchestrator._is_parse_valid(result, parse)
             for unique_id, result in results.items()
-        }
+        }, execution_id=execution_id)
 
     @staticmethod
     def _is_parse_valid(

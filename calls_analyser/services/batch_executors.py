@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
+from itertools import count
 from typing import Mapping, Sequence
 
 from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
@@ -10,6 +11,7 @@ from calls_analyser.services.batch_orchestrator import (
     ExecutorProgress,
     RoundExecutionResult,
     RoundSpec,
+    ValidationResults,
 )
 from calls_analyser.services.tenant import TenantConfig
 
@@ -24,11 +26,13 @@ class SequentialBatchExecutor:
             deque[
                 tuple[
                     RoundSpec,
+                    int,
                     dict[str, AnalysisResult],
                     dict[str, CacheKey],
                 ]
             ],
         ] = {}
+        self._execution_ids = count(1)
 
     def execute(
         self,
@@ -42,6 +46,7 @@ class SequentialBatchExecutor:
         results: dict[str, RoundExecutionResult] = {}
         saved_results: dict[str, AnalysisResult] = {}
         saved_cache_keys: dict[str, CacheKey] = {}
+        execution_id = next(self._execution_ids)
         total = len(entries)
         language = Language(round_spec.language)
         for completed, entry in enumerate(entries, start=1):
@@ -73,6 +78,7 @@ class SequentialBatchExecutor:
                     usage_metadata=analysis.metadata.get("usage_metadata"),
                     cache_key=cache_key,
                     cache_identity=round_spec.cache_identity,
+                    execution_id=execution_id,
                 )
             except Exception as exc:  # noqa: BLE001 - errors are per batch item
                 result = RoundExecutionResult(
@@ -81,12 +87,13 @@ class SequentialBatchExecutor:
                     execution_status="error",
                     execution_error=str(exc),
                     cache_identity=round_spec.cache_identity,
+                    execution_id=execution_id,
                 )
             results[entry.unique_id] = result
             if progress is not None:
                 progress(entry.unique_id, result, completed, total)
         self._pending_runs.setdefault(id(round_spec), deque()).append(
-            (round_spec, saved_results, saved_cache_keys),
+            (round_spec, execution_id, saved_results, saved_cache_keys),
         )
         return results
 
@@ -98,7 +105,26 @@ class SequentialBatchExecutor:
         pending = self._pending_runs.get(id(round_spec))
         if not pending:
             return
-        _retained_spec, saved_results, cache_keys = pending.popleft()
+        requested_execution_id = (
+            validated_results.execution_id
+            if isinstance(validated_results, ValidationResults)
+            else None
+        )
+        pending_index = 0
+        if requested_execution_id is not None:
+            matching_index = next(
+                (
+                    index
+                    for index, run in enumerate(pending)
+                    if run[1] == requested_execution_id
+                ),
+                None,
+            )
+            if matching_index is None:
+                return
+            pending_index = matching_index
+        _retained_spec, _execution_id, saved_results, cache_keys = pending[pending_index]
+        del pending[pending_index]
         if not pending:
             del self._pending_runs[id(round_spec)]
         for unique_id, decision_valid in validated_results.items():

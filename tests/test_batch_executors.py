@@ -4,7 +4,7 @@ from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
 from calls_analyser.ports.ai import AIModelPort, AudioSource
 from calls_analyser.services.analysis import AnalysisService
 from calls_analyser.services.batch_executors import SequentialBatchExecutor
-from calls_analyser.services.batch_orchestrator import RoundSpec
+from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator, RoundSpec
 from calls_analyser.services.prompt import PromptService, PromptTemplate
 from calls_analyser.services.registry import ProviderRegistry
 from calls_analyser.services.tenant import TenantConfig
@@ -152,6 +152,29 @@ def test_interleaved_validation_is_scoped_to_its_round_execution() -> None:
     validation_writes = cache.writes[2:]
     assert [write[0][0] for write in validation_writes] == ["one", "two"]
     assert [write[1]["decision_valid"] for write in validation_writes] == [True, False]
+
+
+def test_same_spec_out_of_order_validation_targets_concrete_execution() -> None:
+    cache = RecordingCache()
+    executor, _ai, _usage = make_executor(cache=cache)
+    entry = [CallLogEntry(unique_id="same")]
+    shared_spec = spec()
+
+    first = executor.execute(entry, TenantConfig("one", "https://api"), shared_spec)
+    second = executor.execute(entry, TenantConfig("two", "https://api"), shared_spec)
+    parse = lambda result: (  # noqa: E731
+        None,
+        "invalid" if result.raw_text == "raw-2" else "valid",
+    )
+    second_validation = BatchAnalysisOrchestrator._validation_mapping(second, parse)  # noqa: SLF001
+    first_validation = BatchAnalysisOrchestrator._validation_mapping(first, parse)  # noqa: SLF001
+
+    executor.record_validation(shared_spec, second_validation)
+    executor.record_validation(shared_spec, first_validation)
+
+    validation_writes = cache.writes[2:]
+    assert [write[0][0] for write in validation_writes] == ["two", "one"]
+    assert [write[1]["decision_valid"] for write in validation_writes] == [False, True]
 
 
 def test_sequential_executor_isolates_same_identity_between_tenants() -> None:
