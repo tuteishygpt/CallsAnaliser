@@ -1,12 +1,13 @@
 """Shared contracts for batch analysis orchestration."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from calls_analyser.domain.models import CallLogEntry
 from calls_analyser.services.analysis import CacheKey
-from calls_analyser.services.follow_up import FollowUpDecision
+from calls_analyser.services.follow_up import FollowUpDecision, FollowUpDecisionParser
 from calls_analyser.services.tenant import TenantConfig
 
 
@@ -24,6 +25,9 @@ VERIFICATION_STATUSES = frozenset(
         "config_error",
     },
 )
+VERIFICATION_MODES = frozenset({"off", "shadow", "enforce"})
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _validate_status(field_name: str, value: str, allowed: frozenset[str]) -> None:
@@ -126,6 +130,7 @@ class BatchProgressEvent:
 
 
 ExecutorProgress = Callable[[str, int, int], None]
+BatchProgressCallback = Callable[[BatchProgressEvent], None]
 
 
 class BatchRoundExecutor(Protocol):
@@ -160,8 +165,16 @@ class BatchAnalysisOrchestrator:
         tenant: TenantConfig,
         round_spec: RoundSpec,
         *,
-        progress: ExecutorProgress | None = None,
+        verification_mode: str = "off",
+        verification_spec: RoundSpec | None = None,
+        verification_config_error: str | None = None,
+        progress: BatchProgressCallback | None = None,
     ) -> BatchRunResult:
+        self._validate_verification_configuration(
+            verification_mode,
+            verification_spec,
+            verification_config_error,
+        )
         ordered_entries = tuple(entries)
         requested_ids: set[str] = set()
         for entry in ordered_entries:
@@ -171,28 +184,319 @@ class BatchAnalysisOrchestrator:
                 )
             requested_ids.add(entry.unique_id)
 
-        execution_results = self._executor.execute(
+        self._emit_progress(
+            progress,
+            BatchProgressEvent(
+                event="primary_started",
+                stage_name=round_spec.stage_name,
+                completed=0,
+                total=len(ordered_entries),
+            ),
+        )
+        execution_results = self._execute_round(
             ordered_entries,
             tenant,
             round_spec,
-            progress=progress,
         )
+
+        primary_items: dict[str, BatchItemResult] = {}
+        candidates: list[CallLogEntry] = []
+        for completed, entry in enumerate(ordered_entries, start=1):
+            primary = execution_results.get(entry.unique_id) or self._missing_result(
+                round_spec,
+            )
+            decision, decision_status = self._parse_primary(
+                primary,
+                verification_mode,
+            )
+            item = BatchItemResult(
+                entry=entry,
+                primary=primary,
+                primary_decision=decision,
+                primary_decision_status=decision_status,
+            )
+            primary_items[entry.unique_id] = item
+            if (
+                verification_mode in {"shadow", "enforce"}
+                and decision is not None
+                and decision.needs_follow_up
+            ):
+                candidates.append(entry)
+            self._emit_progress(
+                progress,
+                BatchProgressEvent(
+                    event="primary_complete",
+                    stage_name=round_spec.stage_name,
+                    completed=completed,
+                    total=len(ordered_entries),
+                    unique_id=entry.unique_id,
+                    item=item,
+                ),
+            )
+
+        verification_results: Mapping[str, RoundExecutionResult] = {}
+        if candidates:
+            verification_stage = (
+                verification_spec.stage_name
+                if verification_spec is not None
+                else "verification"
+            )
+            self._emit_progress(
+                progress,
+                BatchProgressEvent(
+                    event="verification_started",
+                    stage_name=verification_stage,
+                    completed=0,
+                    total=len(candidates),
+                ),
+            )
+            if verification_spec is not None:
+                verification_results = self._execute_round(
+                    tuple(candidates),
+                    tenant,
+                    verification_spec,
+                )
+
+        finalized: dict[str, BatchItemResult] = {}
+        candidate_ids = {entry.unique_id for entry in candidates}
+        verification_completed = 0
+        for entry in ordered_entries:
+            item = primary_items[entry.unique_id]
+            if entry.unique_id in candidate_ids:
+                if verification_config_error is not None:
+                    item = self._apply_verification_config_error(item)
+                else:
+                    assert verification_spec is not None
+                    verification = verification_results.get(entry.unique_id)
+                    if verification is None:
+                        verification = self._missing_result(verification_spec)
+                    item = self._apply_verification(
+                        item,
+                        verification,
+                        verification_mode,
+                    )
+                verification_completed += 1
+                self._emit_progress(
+                    progress,
+                    BatchProgressEvent(
+                        event="verification_complete",
+                        stage_name=(
+                            verification_spec.stage_name
+                            if verification_spec is not None
+                            else "verification"
+                        ),
+                        completed=verification_completed,
+                        total=len(candidates),
+                        unique_id=entry.unique_id,
+                        item=item,
+                    ),
+                )
+            else:
+                item = self._finalize_without_verification(item, verification_mode)
+            finalized[entry.unique_id] = item
+
+        items = tuple(finalized[entry.unique_id] for entry in ordered_entries)
+        result = self._build_result(items, verification_mode)
+        self._emit_progress(
+            progress,
+            BatchProgressEvent(
+                event="run_complete",
+                stage_name="run",
+                completed=len(items),
+                total=len(items),
+            ),
+        )
+        return result
+
+    def _execute_round(
+        self,
+        entries: Sequence[CallLogEntry],
+        tenant: TenantConfig,
+        round_spec: RoundSpec,
+    ) -> Mapping[str, RoundExecutionResult]:
+        execution_results = self._executor.execute(
+            entries,
+            tenant,
+            round_spec,
+            progress=None,
+        )
+        requested_ids = {entry.unique_id for entry in entries}
         extra_ids = set(execution_results).difference(requested_ids)
         if extra_ids:
             extras = ", ".join(sorted(extra_ids))
             raise BatchExecutorContractError(
                 f"executor returned unrequested result IDs: {extras}",
             )
+        return execution_results
 
-        items = tuple(
-            BatchItemResult(
-                entry=entry,
-                primary=execution_results.get(entry.unique_id)
-                or self._missing_result(round_spec),
+    @staticmethod
+    def _validate_verification_configuration(
+        verification_mode: str,
+        verification_spec: RoundSpec | None,
+        verification_config_error: str | None,
+    ) -> None:
+        if verification_mode not in VERIFICATION_MODES:
+            raise ValueError(
+                "verification_mode must be one of: off, shadow, enforce; "
+                f"got {verification_mode!r}",
             )
-            for entry in ordered_entries
+        if verification_spec is not None and verification_config_error is not None:
+            raise ValueError(
+                "provide verification_spec or a verification configuration error, not both",
+            )
+        if (
+            verification_mode in {"shadow", "enforce"}
+            and verification_spec is None
+            and verification_config_error is None
+        ):
+            raise ValueError(
+                "active verification requires verification_spec or a configuration error marker",
+            )
+
+    @staticmethod
+    def _parse_primary(
+        result: RoundExecutionResult,
+        verification_mode: str,
+    ) -> tuple[FollowUpDecision | None, str]:
+        if result.execution_status != "success":
+            return None, "unavailable"
+        if verification_mode == "off" and result.from_cache:
+            decision = FollowUpDecisionParser.parse_compatibility(result.raw_text)
+        else:
+            decision = FollowUpDecisionParser.parse_strict(result.raw_text)
+        return (decision, "valid") if decision is not None else (None, "invalid")
+
+    @staticmethod
+    def _finalize_without_verification(
+        item: BatchItemResult,
+        verification_mode: str,
+    ) -> BatchItemResult:
+        if item.primary.execution_status != "success":
+            return replace(
+                item,
+                final_reason=item.primary.execution_error,
+                final_status="error",
+            )
+        if item.primary_decision is None:
+            return replace(item, final_status="invalid")
+        verification_status = (
+            "disabled"
+            if verification_mode == "off" and item.primary_decision.needs_follow_up
+            else "not_requested"
         )
-        return BatchRunResult(items=items, total=len(items))
+        return replace(
+            item,
+            final_decision=item.primary_decision.needs_follow_up,
+            final_reason=item.primary_decision.reason,
+            final_status="complete",
+            verification_status=verification_status,
+        )
+
+    @staticmethod
+    def _apply_verification_config_error(item: BatchItemResult) -> BatchItemResult:
+        assert item.primary_decision is not None
+        return replace(
+            item,
+            final_decision=True,
+            final_reason=item.primary_decision.reason,
+            final_status="fallback",
+            verification_status="config_error",
+        )
+
+    @staticmethod
+    def _apply_verification(
+        item: BatchItemResult,
+        verification: RoundExecutionResult,
+        verification_mode: str,
+    ) -> BatchItemResult:
+        assert item.primary_decision is not None
+        verification_decision = None
+        verification_decision_status = "unavailable"
+        if verification.execution_status == "success":
+            verification_decision = FollowUpDecisionParser.parse_strict(
+                verification.raw_text,
+            )
+            verification_decision_status = (
+                "valid" if verification_decision is not None else "invalid"
+            )
+        if verification_decision is None:
+            return replace(
+                item,
+                verification=verification,
+                verification_decision_status=verification_decision_status,
+                final_decision=True,
+                final_reason=item.primary_decision.reason,
+                final_status="fallback",
+                verification_status="failed",
+            )
+        if verification_mode == "shadow":
+            return replace(
+                item,
+                verification=verification,
+                verification_decision=verification_decision,
+                verification_decision_status="valid",
+                final_decision=True,
+                final_reason=item.primary_decision.reason,
+                final_status="complete",
+                verification_status="shadow_complete",
+            )
+        return replace(
+            item,
+            verification=verification,
+            verification_decision=verification_decision,
+            verification_decision_status="valid",
+            final_decision=verification_decision.needs_follow_up,
+            final_reason=verification_decision.reason,
+            final_status="complete",
+            verification_status="complete",
+        )
+
+    @staticmethod
+    def _build_result(
+        items: tuple[BatchItemResult, ...],
+        verification_mode: str,
+    ) -> BatchRunResult:
+        return BatchRunResult(
+            items=items,
+            total=len(items),
+            round_1_success=sum(
+                item.primary_decision_status == "valid" for item in items
+            ),
+            verification_requested=sum(
+                item.verification_status
+                in {"shadow_complete", "complete", "failed", "config_error"}
+                for item in items
+            ),
+            verification_success=sum(
+                item.verification_status in {"shadow_complete", "complete"}
+                for item in items
+            ),
+            verification_changed_to_false=sum(
+                verification_mode == "enforce"
+                and item.primary_decision is not None
+                and item.primary_decision.needs_follow_up
+                and item.verification_decision is not None
+                and not item.verification_decision.needs_follow_up
+                for item in items
+            ),
+            verification_failed=sum(
+                item.verification_status in {"failed", "config_error"}
+                for item in items
+            ),
+            final_follow_up=sum(item.final_decision is True for item in items),
+        )
+
+    @staticmethod
+    def _emit_progress(
+        callback: BatchProgressCallback | None,
+        event: BatchProgressEvent,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(event)
+        except Exception:  # noqa: BLE001 - client callbacks must not abort a batch
+            LOGGER.exception("progress callback failed for %s", event.event)
 
     @staticmethod
     def _missing_result(round_spec: RoundSpec) -> RoundExecutionResult:
