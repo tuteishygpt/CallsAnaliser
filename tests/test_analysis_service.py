@@ -156,3 +156,41 @@ def test_analysis_service_records_usage_for_uncached_model_call_only() -> None:
         "fake-model",
         "custom",
     )
+
+
+def test_analysis_service_bypass_skips_read_but_upserts_with_audit_metadata() -> None:
+    registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
+    ai = FakeAIModel()
+    registry.register("fake-model", ai)
+    cache: dict[CacheKey, AnalysisResult] = {}
+    service = AnalysisService(
+        StubCallLogService(), registry, PromptService(PROMPTS), cache=cache,
+    )
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
+    options = AnalysisOptions(
+        model_key="fake-model",
+        prompt_key="simple",
+        bypass_cache=True,
+        batch_stage="verification",
+        batch_execution="ui_sequential",
+    )
+
+    first = service.analyze_call("abc", tenant, Language.ENGLISH, options)
+    second = service.analyze_call("abc", tenant, Language.ENGLISH, options)
+
+    assert first.text == "result-1"
+    assert second.text == "result-2"
+    assert ai.calls == 2
+    assert len(cache) == 1
+    assert next(iter(cache.values())) is second
+    assert second.metadata["batch_stage"] == "verification"
+    assert second.metadata["batch_execution"] == "ui_sequential"
+    assert second.metadata["decision_valid"] is False
+
+
+def test_analysis_options_preserve_direct_analysis_defaults() -> None:
+    options = AnalysisOptions(model_key="fake-model", prompt_key="simple")
+
+    assert options.bypass_cache is False
+    assert options.batch_stage is None
+    assert options.batch_execution is None
