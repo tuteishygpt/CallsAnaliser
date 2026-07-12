@@ -138,6 +138,10 @@ ExecutorProgress = Callable[[str, RoundExecutionResult, int, int], None]
 BatchProgressCallback = Callable[[BatchProgressEvent], None]
 
 
+class CancellationSignal(Protocol):
+    def is_set(self) -> bool: ...
+
+
 class ValidationResults(dict[str, bool]):
     """Validation flags tied to the concrete executor invocation they describe."""
 
@@ -174,6 +178,10 @@ class BatchRoundExecutor(Protocol):
 
 class BatchExecutorContractError(RuntimeError):
     """Raised when an executor violates the round-result mapping contract."""
+
+
+class BatchRunCancelled(RuntimeError):
+    """Raised at a cooperative boundary when a caller cancels a batch run."""
 
 
 class BatchAnalysisOrchestrator:
@@ -257,6 +265,7 @@ class BatchAnalysisOrchestrator:
         primary_usage_mode: str,
         verification_usage_mode: str,
         progress: BatchProgressCallback | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> BatchRunResult:
         primary, verification, config_error = self.resolve_round_specs(
             tenant,
@@ -274,6 +283,7 @@ class BatchAnalysisOrchestrator:
             verification_spec=verification,
             verification_config_error=config_error,
             progress=progress,
+            cancellation=cancellation,
         )
 
     def _build_round_spec(
@@ -332,7 +342,9 @@ class BatchAnalysisOrchestrator:
         verification_spec: RoundSpec | None = None,
         verification_config_error: str | None = None,
         progress: BatchProgressCallback | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> BatchRunResult:
+        self._raise_if_cancelled(cancellation)
         self._validate_verification_configuration(
             verification_mode,
             verification_spec,
@@ -366,6 +378,7 @@ class BatchAnalysisOrchestrator:
             executor_completed: int,
             executor_total: int,
         ) -> None:
+            self._raise_if_cancelled(cancellation)
             self._emit_progress(
                 progress,
                 BatchProgressEvent(
@@ -415,6 +428,7 @@ class BatchAnalysisOrchestrator:
             parse=lambda result: self._parse_primary(result, verification_mode),
             progress=emit_primary_complete,
             live_progress=emit_primary_progress,
+            cancellation=cancellation,
         )
 
         primary_items: dict[str, BatchItemResult] = {}
@@ -440,6 +454,7 @@ class BatchAnalysisOrchestrator:
         verification_results: Mapping[str, RoundExecutionResult] = {}
         verification_completed = 0
         if candidates:
+            self._raise_if_cancelled(cancellation)
             verification_stage = (
                 verification_spec.stage_name
                 if verification_spec is not None
@@ -466,6 +481,7 @@ class BatchAnalysisOrchestrator:
                     executor_completed: int,
                     executor_total: int,
                 ) -> None:
+                    self._raise_if_cancelled(cancellation)
                     self._emit_progress(
                         progress,
                         BatchProgressEvent(
@@ -520,6 +536,7 @@ class BatchAnalysisOrchestrator:
                     parse=self._parse_strict,
                     progress=emit_verification_complete,
                     live_progress=emit_verification_progress,
+                    cancellation=cancellation,
                 )
             else:
                 reported_verification_ids = set()
@@ -590,6 +607,7 @@ class BatchAnalysisOrchestrator:
         ],
         progress: ExecutorProgress | None,
         live_progress: ExecutorProgress | None,
+        cancellation: CancellationSignal | None = None,
     ) -> Mapping[str, RoundExecutionResult]:
         ordered_entries = tuple(entries)
         buffered_initial_progress: list[tuple[str, int, int]] = []
@@ -645,6 +663,7 @@ class BatchAnalysisOrchestrator:
                 suppress_retryable=True,
                 buffer=buffered_initial_progress,
             ),
+            cancellation=cancellation,
         )
         initial_validation = self._validation_mapping(initial, parse)
         self._executor.record_validation(round_spec, initial_validation)
@@ -662,6 +681,8 @@ class BatchAnalysisOrchestrator:
         if not retry_entries:
             return initial
 
+        self._raise_if_cancelled(cancellation)
+
         buffered_retry_progress: list[tuple[str, int, int]] = []
         retry = self._execute_once(
             retry_entries,
@@ -673,6 +694,7 @@ class BatchAnalysisOrchestrator:
                 suppress_retryable=False,
                 buffer=buffered_retry_progress,
             ),
+            cancellation=cancellation,
         )
         self._executor.record_validation(
             round_spec,
@@ -685,6 +707,11 @@ class BatchAnalysisOrchestrator:
         merged.update(retry)
         return merged
 
+    @staticmethod
+    def _raise_if_cancelled(cancellation: CancellationSignal | None) -> None:
+        if cancellation is not None and cancellation.is_set():
+            raise BatchRunCancelled("batch run cancelled")
+
     def _execute_once(
         self,
         entries: Sequence[CallLogEntry],
@@ -693,14 +720,14 @@ class BatchAnalysisOrchestrator:
         *,
         bypass_cache: bool,
         progress: ExecutorProgress | None,
+        cancellation: CancellationSignal | None = None,
     ) -> dict[str, RoundExecutionResult]:
-        execution_results = self._executor.execute(
-            entries,
-            tenant,
-            round_spec,
-            bypass_cache=bypass_cache,
-            progress=progress,
-        )
+        kwargs = {"bypass_cache": bypass_cache, "progress": progress}
+        if cancellation is not None and getattr(
+            self._executor, "supports_cancellation", False,
+        ):
+            kwargs["cancellation"] = cancellation
+        execution_results = self._executor.execute(entries, tenant, round_spec, **kwargs)
         requested_ids = {entry.unique_id for entry in entries}
         extra_ids = set(execution_results).difference(requested_ids)
         if extra_ids:

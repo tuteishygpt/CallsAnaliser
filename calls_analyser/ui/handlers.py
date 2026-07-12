@@ -1025,6 +1025,7 @@ class UIHandlers:
 
             items_by_id = {}
             progress_queue = queue.Queue()
+            cancellation = threading.Event()
 
             def capture_progress(event):  # noqa: ANN001
                 if event.unique_id is None:
@@ -1051,34 +1052,43 @@ class UIHandlers:
                         primary_usage_mode="ui_mass",
                         verification_usage_mode="ui_mass_verify",
                         progress=capture_progress,
+                        cancellation=cancellation,
                     )
                 except BaseException as exc:
                     progress_queue.put(("error", exc))
                 else:
                     progress_queue.put(("result", result))
 
-            worker = threading.Thread(target=run_orchestrator, name="ui-batch-orchestrator")
+            # A provider call already blocked inside an SDK cannot be force-killed.
+            # Daemon mode keeps that call from preventing process shutdown.
+            worker = threading.Thread(
+                target=run_orchestrator,
+                name="ui-batch-orchestrator",
+                daemon=True,
+            )
             worker.start()
             run_result = None
-            while run_result is None:
-                message = progress_queue.get()
-                if message[0] == "error":
-                    worker.join()
-                    raise message[1]
-                if message[0] == "result":
-                    run_result = message[1]
-                    worker.join()
-                    continue
-                _, event, partial_df = message
-                phase = "Verification" if event.stage_name == "verification" else "Primary analysis"
-                interim_msg = f"{phase} {event.completed}/{event.total}... UID `{event.unique_id}`"
-                yield (
-                    gr.update(value=utils.prepare_results_display(partial_df), visible=True),
-                    partial_df,
-                    h3(interim_msg),
-                    hidden_file,
-                    hidden_filter,
-                )
+            try:
+                while run_result is None:
+                    message = progress_queue.get()
+                    if message[0] == "error":
+                        raise message[1]
+                    if message[0] == "result":
+                        run_result = message[1]
+                        continue
+                    _, event, partial_df = message
+                    phase = "Verification" if event.stage_name == "verification" else "Primary analysis"
+                    interim_msg = f"{phase} {event.completed}/{event.total}... UID `{event.unique_id}`"
+                    yield (
+                        gr.update(value=utils.prepare_results_display(partial_df), visible=True),
+                        partial_df,
+                        h3(interim_msg),
+                        hidden_file,
+                        hidden_filter,
+                    )
+            finally:
+                cancellation.set()
+                worker.join(timeout=0.5)
 
             final_df = pd.DataFrame(
                 [build_batch_item_row(item, tenant) for item in run_result.items],

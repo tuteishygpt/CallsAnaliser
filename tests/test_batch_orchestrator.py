@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import threading
 from typing import get_type_hints
 
 import pytest
@@ -12,6 +13,7 @@ from calls_analyser.services.batch_orchestrator import (
     BatchExecutorContractError,
     BatchItemResult,
     BatchProgressEvent,
+    BatchRunCancelled,
     DECISION_STATUSES,
     EXECUTION_STATUSES,
     FINAL_STATUSES,
@@ -729,6 +731,27 @@ def test_progress_events_are_deterministic_and_primary_items_remain_pending(tena
     assert primary_events[1].item.verification_status == "not_requested"
     assert callable(executor.execute_calls[0][4])
     assert callable(executor.execute_calls[1][4])
+
+
+def test_cancellation_between_rounds_skips_verification(tenant) -> None:
+    cancellation = threading.Event()
+    executor = _RoundExecutor({
+        "primary": {"yes": _decision(True)},
+        "verification": {"yes": _decision(False)},
+    })
+
+    def cancel_after_primary(event: BatchProgressEvent) -> None:
+        if event.event == "primary_complete":
+            cancellation.set()
+
+    with pytest.raises(BatchRunCancelled, match="batch run cancelled"):
+        BatchAnalysisOrchestrator(executor).run(
+            [_entry("yes")], tenant, _round_spec(), verification_mode="enforce",
+            verification_spec=_verification_spec(), progress=cancel_after_primary,
+            cancellation=cancellation,
+        )
+
+    assert [call[2].stage_name for call in executor.execute_calls] == ["primary"]
 
 
 def test_executor_item_progress_is_live_and_terminal_result_is_reconciled(

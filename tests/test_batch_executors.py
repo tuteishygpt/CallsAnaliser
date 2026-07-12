@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import threading
+
+import pytest
+
 from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
 from calls_analyser.ports.ai import AIModelPort, AudioSource
 from calls_analyser.services.analysis import AnalysisService
 from calls_analyser.services.batch_executors import SequentialBatchExecutor, VertexBatchExecutor
-from calls_analyser.services.batch_orchestrator import BatchAnalysisOrchestrator, RoundSpec
+from calls_analyser.services.batch_orchestrator import (
+    BatchAnalysisOrchestrator,
+    BatchRunCancelled,
+    RoundSpec,
+)
 from calls_analyser.services.gemini_batch import BatchAnalysisResult
 from calls_analyser.services.prompt import PromptService, PromptTemplate
 from calls_analyser.services.registry import ProviderRegistry
@@ -95,6 +103,22 @@ def test_sequential_executor_returns_raw_results_cache_hits_errors_and_progress(
     assert cached_result.metadata["decision_valid"] is True
     assert ai.calls == 2
     assert [(p[0], p[2], p[3]) for p in progress] == [("ok", 1, 2), ("bad", 2, 2)]
+
+
+def test_sequential_executor_stops_before_next_item_when_cancelled() -> None:
+    executor, ai, _usage = make_executor()
+    cancellation = threading.Event()
+
+    with pytest.raises(BatchRunCancelled, match="batch run cancelled"):
+        executor.execute(
+            [CallLogEntry(unique_id="one"), CallLogEntry(unique_id="two")],
+            TenantConfig(tenant_id="one", vochi_base_url="https://api"),
+            spec(),
+            cancellation=cancellation,
+            progress=lambda *_args: cancellation.set(),
+        )
+
+    assert ai.calls == 1
 
 
 def test_sequential_executor_records_stage_modes_and_validation_acknowledgement() -> None:

@@ -10,6 +10,8 @@ from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
 from calls_analyser.services.analysis import AnalysisOptions, AnalysisService, CacheKey
 from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.services.batch_orchestrator import (
+    BatchRunCancelled,
+    CancellationSignal,
     ExecutorProgress,
     RoundExecutionResult,
     RoundExecutionResults,
@@ -28,6 +30,8 @@ from calls_analyser.services.usage import extract_usage_metadata
 
 class SequentialBatchExecutor:
     """Run a batch round item-by-item through ``AnalysisService``."""
+
+    supports_cancellation = True
 
     def __init__(self, analysis_service: AnalysisService) -> None:
         self._analysis_service = analysis_service
@@ -52,6 +56,7 @@ class SequentialBatchExecutor:
         *,
         bypass_cache: bool = False,
         progress: ExecutorProgress | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> dict[str, RoundExecutionResult]:
         results: dict[str, RoundExecutionResult] = {}
         saved_results: dict[str, AnalysisResult] = {}
@@ -60,6 +65,8 @@ class SequentialBatchExecutor:
         total = len(entries)
         language = Language(round_spec.language)
         for completed, entry in enumerate(entries, start=1):
+            if cancellation is not None and cancellation.is_set():
+                raise BatchRunCancelled("batch run cancelled")
             try:
                 analysis, from_cache, cache_key = (
                     self._analysis_service.analyze_call_with_status(

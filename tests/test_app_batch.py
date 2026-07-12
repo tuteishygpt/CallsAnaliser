@@ -323,6 +323,55 @@ def test_ui_mass_analyze_yields_progress_before_orchestrator_completes(monkeypat
     assert "Primary analysis 1/1" in progress[2]
 
 
+def test_closing_ui_mass_analyze_cancels_and_joins_worker(monkeypatch) -> None:
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2024, 2, 15, 9, 30), caller_id="Alice",
+        destination="Support", duration_seconds=123, unique_id="call-1", raw={},
+    )
+    tenant, _analysis = _configure_batch_environment(monkeypatch, entries=[entry])
+    cancellation_seen = threading.Event()
+    worker_finished = threading.Event()
+
+    class _CooperativeOrchestrator:
+        def run_with_settings(self, entries, tenant, settings, **kwargs):  # noqa: ANN001, ANN201
+            executor = _RecordingRoundExecutor()
+            result = BatchAnalysisOrchestrator(executor).run(
+                entries,
+                tenant,
+                SimpleNamespace(
+                    stage_name="primary", model_key="fake-model", prompt_key="batch",
+                    prompt_text="Primary", prompt_version=1, language="en", usage_mode="ui_mass",
+                ),
+                progress=kwargs["progress"],
+            )
+            cancellation = kwargs["cancellation"]
+            cancellation_seen.set() if cancellation.wait(2) else None
+            worker_finished.set()
+            return result
+
+    monkeypatch.setattr(app.handlers.deps, "batch_orchestrator", _CooperativeOrchestrator())
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "tenant_settings_service",
+        SimpleNamespace(resolve=lambda _tenant_id: TenantRuntimeSettings(
+            batch_model_key="fake-model", batch_language_code="en",
+            follow_up_verification_mode="off",
+        )),
+    )
+
+    output = app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True)
+    next(output)
+    assert "Primary analysis 1/1" in next(output)[2]
+    output.close()
+
+    assert cancellation_seen.wait(0.5)
+    assert worker_finished.wait(0.5)
+    assert not any(
+        thread.name == "ui-batch-orchestrator" and not thread.daemon
+        for thread in threading.enumerate()
+    )
+
+
 def test_ui_mass_analyze_uses_tenant_settings_and_projects_two_pass_audit(monkeypatch) -> None:
     entries = [
         SimpleNamespace(
