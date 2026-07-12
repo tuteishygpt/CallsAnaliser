@@ -249,14 +249,6 @@ def run_batch_process(
 
     settings = _orchestrator_settings(deps, runtime_settings)
     analysis_service = deps.analysis_service
-    analysis_service._call_log_service = deps.call_log_service
-    analysis_service._usage_tracker = getattr(deps, "usage_tracker", None)
-    if not callable(getattr(analysis_service, "persist_cached_result", None)):
-        def persist_cached_result(cache_key, result):  # noqa: ANN001
-            set_item = getattr(analysis_service._cache, "__setitem__", None)
-            if callable(set_item):
-                set_item(cache_key, result)
-        analysis_service.persist_cached_result = persist_cached_result
     executor = VertexBatchExecutor(
         analysis_service,
         runner_factory=lambda model: VertexBatchRunner(model=model),

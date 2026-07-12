@@ -91,6 +91,9 @@ class _BulkOnlyCache:
     def get(self, _key):  # noqa: ANN001
         raise AssertionError("runner should use bulk cache lookup")
 
+    def __setitem__(self, key, value) -> None:  # noqa: ANN001
+        self._results[key] = value
+
 
 class _RecordingUsageTracker:
     def __init__(self) -> None:
@@ -98,6 +101,30 @@ class _RecordingUsageTracker:
 
     def record(self, **kwargs) -> None:  # noqa: ANN003
         self.calls.append(kwargs)
+
+
+class _AnalysisServiceFixture:
+    """Executor-facing analysis service without runner-mutable dependencies."""
+
+    def __init__(self, cache, call_log_service=None, usage_tracker=None) -> None:  # noqa: ANN001
+        self.__cache = cache
+        self.__call_log_service = call_log_service or _PreparingCallLogService([])
+        self.__usage_tracker = usage_tracker
+
+    @property
+    def _cache(self):  # noqa: ANN202
+        return self.__cache
+
+    @property
+    def _call_log_service(self):  # noqa: ANN202
+        return self.__call_log_service
+
+    @property
+    def _usage_tracker(self):  # noqa: ANN202
+        return self.__usage_tracker
+
+    def persist_cached_result(self, cache_key, result) -> None:  # noqa: ANN001
+        self.__cache[cache_key] = result
 
 
 class _PromptService:
@@ -167,7 +194,7 @@ def test_run_batch_uses_tenant_prompt_body_and_version_for_vertex_batch(monkeypa
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=prompt_service,
-        analysis_service=SimpleNamespace(_cache=cache),
+        analysis_service=_AnalysisServiceFixture(cache, _PreparingCallLogService([entry]), usage_tracker),
         email_report_service=None,
         usage_tracker=usage_tracker,
     )
@@ -248,7 +275,7 @@ def test_run_batch_falls_back_to_global_prompt_when_tenant_prompt_body_is_empty(
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=prompt_service,
-        analysis_service=SimpleNamespace(_cache=cache),
+        analysis_service=_AnalysisServiceFixture(cache, _PreparingCallLogService([entry])),
         email_report_service=None,
     )
 
@@ -314,7 +341,7 @@ def test_run_batch_sends_cached_results_by_email() -> None:
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache=cache),
+        analysis_service=_AnalysisServiceFixture(cache, _CallLogService([entry])),
         email_report_service=email_service,
     )
 
@@ -385,7 +412,7 @@ def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache=cache),
+        analysis_service=_AnalysisServiceFixture(cache, _CallLogService(entries)),
         email_report_service=None,
     )
 
@@ -396,7 +423,7 @@ def test_run_batch_uses_bulk_cache_lookup_for_cached_results() -> None:
     assert list(results["Reason"]) == ["call-0", "call-1"]
 
 
-def test_run_batch_skips_email_when_batch_failure_has_no_successes(monkeypatch) -> None:
+def test_run_batch_skips_email_when_round_one_has_no_valid_primary_decisions(monkeypatch) -> None:
     day = dt.date(2026, 6, 22)
     tenant = SimpleNamespace(
         tenant_id="lix",
@@ -434,13 +461,14 @@ def test_run_batch_skips_email_when_batch_failure_has_no_successes(monkeypatch) 
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache={}),
+        analysis_service=_AnalysisServiceFixture({}, _PreparingCallLogService([entry])),
         email_report_service=email_service,
     )
 
     results = run_batch_process(deps, day, None, None, "", "lix")
 
     assert list(results["UniqueId"]) == ["call-1"]
+    assert list(results["Needs follow-up"]) == [""]
     assert email_service.calls == []
 
 
@@ -492,7 +520,9 @@ def test_run_batch_records_usage_for_processed_vertex_batch_result(monkeypatch) 
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(provider),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache={}),
+        analysis_service=_AnalysisServiceFixture(
+            {}, _PreparingCallLogService([entry]), usage_tracker,
+        ),
         email_report_service=None,
         usage_tracker=usage_tracker,
     )
@@ -563,7 +593,7 @@ def test_run_batch_uses_tenant_runtime_model_and_batch_size_for_processed_result
         batch_model_key="models/gemini-default",
         ai_registry=registry,
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache=cache),
+        analysis_service=_AnalysisServiceFixture(cache, _PreparingCallLogService([entry])),
         email_report_service=None,
         tenant_settings_service=tenant_settings_service,
     )
@@ -618,7 +648,7 @@ def test_run_batch_uses_tenant_scheduler_filters_when_explicit_args_are_empty() 
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache={}),
+        analysis_service=_AnalysisServiceFixture({}, call_log_service),
         email_report_service=None,
         tenant_settings_service=_TenantSettingsService(runtime_settings),
     )
@@ -661,7 +691,7 @@ def test_run_batch_skips_processing_when_tenant_settings_disable_batch() -> None
         batch_model_key="models/gemini-test",
         ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
         prompt_service=_PromptService(),
-        analysis_service=SimpleNamespace(_cache={}),
+        analysis_service=_AnalysisServiceFixture({}, call_log_service),
         email_report_service=None,
         tenant_settings_service=tenant_settings_service,
     )
@@ -673,7 +703,10 @@ def test_run_batch_skips_processing_when_tenant_settings_disable_batch() -> None
     assert call_log_service.calls == []
 
 
-def test_run_batch_enforces_verification_and_emails_audit_columns(monkeypatch) -> None:
+def test_run_batch_enforces_verification_and_emails_audit_columns(
+    monkeypatch, caplog,
+) -> None:
+    caplog.set_level("INFO", logger="daily_batch")
     day = dt.date(2026, 6, 22)
     tenant = SimpleNamespace(
         tenant_id="lix", provider="vochi",
@@ -685,6 +718,7 @@ def test_run_batch_enforces_verification_and_emails_audit_columns(monkeypatch) -
         raw={"recording_url": "https://example.test/call-1"},
     )
     rounds = []
+    usage_tracker = _RecordingUsageTracker()
 
     class TwoRoundRunner:
         def __init__(self, *, model):  # noqa: ANN001
@@ -699,7 +733,11 @@ def test_run_batch_enforces_verification_and_emails_audit_columns(monkeypatch) -
                         "needs_follow_up": not decision,
                         "reason": "primary reason" if not decision else "cleared",
                     }),
-                    usage_metadata=None,
+                    usage_metadata={
+                        "promptTokenCount": 2,
+                        "candidatesTokenCount": 1,
+                        "totalTokenCount": 3,
+                    },
                 )
             }
 
@@ -726,8 +764,11 @@ def test_run_batch_enforces_verification_and_emails_audit_columns(monkeypatch) -
             "primary-model": SimpleNamespace(provider_name="gemini"),
             "verify-model": SimpleNamespace(provider_name="gemini"),
         }),
-        prompt_service=prompt_service, analysis_service=SimpleNamespace(_cache={}),
-        email_report_service=email,
+        prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture(
+            {}, _PreparingCallLogService([entry]), usage_tracker,
+        ),
+        email_report_service=email, usage_tracker=usage_tracker,
     )
 
     results = run_batch_process(deps, day, None, None, "", "lix")
@@ -741,3 +782,179 @@ def test_run_batch_enforces_verification_and_emails_audit_columns(monkeypatch) -
     assert results.loc[0, "Verification needs follow-up"] == "No"
     assert results.loc[0, "Verification status"] == "complete"
     assert len(email.calls) == 1
+    assert [call["mode"] for call in usage_tracker.calls] == [
+        "scheduler_batch", "scheduler_batch_verify",
+    ]
+    assert (
+        "total=1 round_1_success=1 verification_requested=1 "
+        "verification_success=1 verification_changed_to_false=1 "
+        "verification_failed=0 final_follow_up=0"
+    ) in caplog.text
+
+
+def test_run_batch_reuses_cached_verification_without_second_vertex_job(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix", provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/{unique_id}",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9), caller_id="Client",
+        destination="Support", duration_seconds=90, unique_id="call-1",
+        raw={"recording_url": "https://example.test/call-1"},
+    )
+    cache = {
+        ("lix", "call-1", "VERIFY_PROMPT", 1, "gemini", "verify-model", ""):
+            AnalysisResult(
+                text=json.dumps({"needs_follow_up": False, "reason": "cached clear"}),
+                model="verify-model", provider="gemini",
+            ),
+    }
+    calls = []
+
+    class PrimaryRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch_results(self, tasks, _prompt, *, chunk_size):  # noqa: ANN001
+            calls.append((self.model, [task.key for task in tasks]))
+            return {"call-1": BatchAnalysisResult(
+                text=json.dumps({"needs_follow_up": True, "reason": "primary"}),
+            )}
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", PrimaryRunner)
+    settings = SimpleNamespace(
+        batch_enabled=True, batch_model_key="primary-model", batch_language_code="en",
+        batch_size=7, scheduler_filters={}, follow_up_verification_mode="enforce",
+        follow_up_verification_model_key="verify-model",
+        follow_up_verification_prompt_key="VERIFY_PROMPT",
+    )
+    prompt_service = SimpleNamespace(get_prompt=lambda key, tenant_id=None: SimpleNamespace(
+        key=key, version=1, body=f"{key} body",
+    ))
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        tenant_settings_service=_TenantSettingsService(settings),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="primary",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="default-model",
+        ai_registry=_RecordingRegistry({
+            "primary-model": SimpleNamespace(provider_name="gemini"),
+            "verify-model": SimpleNamespace(provider_name="gemini"),
+        }),
+        prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture(cache, _PreparingCallLogService([entry])),
+        email_report_service=None,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert calls == [("primary-model", ["call-1"])]
+    assert results.loc[0, "Needs follow-up"] == "No"
+    assert results.loc[0, "Verification reason"] == "cached clear"
+
+
+def test_run_batch_retries_only_ids_missing_from_partial_vertex_output(monkeypatch) -> None:
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix", provider="vochi",
+        recording_url=lambda unique_id: f"https://example.test/{unique_id}",
+    )
+    entries = [SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9, i), caller_id="Client",
+        destination="Support", duration_seconds=90, unique_id=f"call-{i}",
+        raw={"recording_url": f"https://example.test/call-{i}"},
+    ) for i in range(2)]
+    calls = []
+
+    class PartialRunner:
+        def __init__(self, *, model):  # noqa: ANN001
+            pass
+
+        def run_batch_results(self, tasks, _prompt, *, chunk_size):  # noqa: ANN001
+            ids = [task.key for task in tasks]
+            calls.append(ids)
+            returned = ids if len(ids) == 1 else ids[:1]
+            return {unique_id: BatchAnalysisResult(text=json.dumps({
+                "needs_follow_up": False, "reason": f"done {unique_id}",
+            })) for unique_id in returned}
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", PartialRunner)
+    prompt_service = SimpleNamespace(get_prompt=lambda key, tenant_id=None: SimpleNamespace(
+        key=key, version=1, body="prompt",
+    ))
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant), call_log_service=_PreparingCallLogService(entries),
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="primary",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="primary-model",
+        ai_registry=_Registry(SimpleNamespace(provider_name="gemini")),
+        prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture({}, _PreparingCallLogService(entries)),
+        email_report_service=None,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert calls == [["call-0", "call-1"], ["call-1"]]
+    assert list(results["Reason"]) == ["done call-0", "done call-1"]
+
+
+def test_run_batch_shadow_retains_verification_audit_without_changing_final(monkeypatch) -> None:
+    # Reuse the enforce integration shape, changing only the tenant mode.
+    day = dt.date(2026, 6, 22)
+    tenant = SimpleNamespace(
+        tenant_id="lix", provider="vochi", recording_url=lambda unique_id: "",
+    )
+    entry = SimpleNamespace(
+        started_at=dt.datetime(2026, 6, 22, 9), caller_id="Client",
+        destination="Support", duration_seconds=90, unique_id="call-1", raw={},
+    )
+
+    class Runner:
+        def __init__(self, *, model):  # noqa: ANN001
+            self.model = model
+
+        def run_batch_results(self, tasks, _prompt, *, chunk_size):  # noqa: ANN001
+            verify = self.model == "verify-model"
+            return {"call-1": BatchAnalysisResult(text=json.dumps({
+                "needs_follow_up": not verify,
+                "reason": "primary reason" if not verify else "shadow clear",
+            }))}
+
+    monkeypatch.setattr("calls_analyser.runner.VertexBatchRunner", Runner)
+    settings = SimpleNamespace(
+        batch_enabled=True, batch_model_key="primary-model", batch_language_code="en",
+        batch_size=7, scheduler_filters={}, follow_up_verification_mode="shadow",
+        follow_up_verification_model_key="verify-model",
+        follow_up_verification_prompt_key="VERIFY_PROMPT",
+    )
+    prompt_service = SimpleNamespace(get_prompt=lambda key, tenant_id=None: SimpleNamespace(
+        key=key, version=1, body=f"{key} body",
+    ))
+    deps = SimpleNamespace(
+        project_imports_available=True,
+        batch_params=SimpleNamespace(enable_gemini_batch=True, batch_size=25),
+        tenant_service=_TenantService(tenant),
+        tenant_settings_service=_TenantSettingsService(settings),
+        call_log_service=_PreparingCallLogService([entry]),
+        batch_language=SimpleNamespace(value="en"), batch_prompt_text="primary",
+        batch_prompt_key="BATCH_PROMPT", batch_model_key="default-model",
+        ai_registry=_RecordingRegistry({
+            "primary-model": SimpleNamespace(provider_name="gemini"),
+            "verify-model": SimpleNamespace(provider_name="gemini"),
+        }), prompt_service=prompt_service,
+        analysis_service=_AnalysisServiceFixture({}, _PreparingCallLogService([entry])),
+        email_report_service=None,
+    )
+
+    results = run_batch_process(deps, day, None, None, "", "lix")
+
+    assert results.loc[0, "Needs follow-up"] == "Yes"
+    assert results.loc[0, "Reason"] == "primary reason"
+    assert results.loc[0, "Verification needs follow-up"] == "No"
+    assert results.loc[0, "Verification reason"] == "shadow clear"
+    assert results.loc[0, "Verification status"] == "shadow_complete"
