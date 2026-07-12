@@ -129,7 +129,7 @@ class BatchProgressEvent:
     item: BatchItemResult | None = None
 
 
-ExecutorProgress = Callable[[str, int, int], None]
+ExecutorProgress = Callable[[str, RoundExecutionResult, int, int], None]
 BatchProgressCallback = Callable[[BatchProgressEvent], None]
 
 
@@ -193,10 +193,43 @@ class BatchAnalysisOrchestrator:
                 total=len(ordered_entries),
             ),
         )
+        entries_by_id = {entry.unique_id: entry for entry in ordered_entries}
+        reported_primary_ids: set[str] = set()
+
+        def emit_primary_complete(
+            unique_id: str,
+            execution: RoundExecutionResult,
+            completed: int,
+            total: int,
+        ) -> None:
+            entry = entries_by_id.get(unique_id)
+            if entry is None:
+                raise BatchExecutorContractError(
+                    f"executor reported progress for unrequested result ID: {unique_id}",
+                )
+            if unique_id in reported_primary_ids:
+                raise BatchExecutorContractError(
+                    f"executor reported duplicate progress for result ID: {unique_id}",
+                )
+            reported_primary_ids.add(unique_id)
+            item = self._build_primary_item(entry, execution, verification_mode)
+            self._emit_progress(
+                progress,
+                BatchProgressEvent(
+                    event="primary_complete",
+                    stage_name=round_spec.stage_name,
+                    completed=completed,
+                    total=total,
+                    unique_id=unique_id,
+                    item=item,
+                ),
+            )
+
         execution_results = self._execute_round(
             ordered_entries,
             tenant,
             round_spec,
+            progress=emit_primary_complete,
         )
 
         primary_items: dict[str, BatchItemResult] = {}
@@ -205,34 +238,21 @@ class BatchAnalysisOrchestrator:
             primary = execution_results.get(entry.unique_id) or self._missing_result(
                 round_spec,
             )
-            decision, decision_status = self._parse_primary(
-                primary,
-                verification_mode,
-            )
-            item = BatchItemResult(
-                entry=entry,
-                primary=primary,
-                primary_decision=decision,
-                primary_decision_status=decision_status,
-            )
+            item = self._build_primary_item(entry, primary, verification_mode)
             primary_items[entry.unique_id] = item
             if (
                 verification_mode in {"shadow", "enforce"}
-                and decision is not None
-                and decision.needs_follow_up
+                and item.primary_decision is not None
+                and item.primary_decision.needs_follow_up
             ):
                 candidates.append(entry)
-            self._emit_progress(
-                progress,
-                BatchProgressEvent(
-                    event="primary_complete",
-                    stage_name=round_spec.stage_name,
-                    completed=completed,
-                    total=len(ordered_entries),
-                    unique_id=entry.unique_id,
-                    item=item,
-                ),
-            )
+            if entry.unique_id not in reported_primary_ids:
+                emit_primary_complete(
+                    entry.unique_id,
+                    primary,
+                    completed,
+                    len(ordered_entries),
+                )
 
         verification_results: Mapping[str, RoundExecutionResult] = {}
         if candidates:
@@ -251,11 +271,53 @@ class BatchAnalysisOrchestrator:
                 ),
             )
             if verification_spec is not None:
+                candidates_by_id = {
+                    entry.unique_id: entry for entry in candidates
+                }
+                reported_verification_ids: set[str] = set()
+
+                def emit_verification_complete(
+                    unique_id: str,
+                    execution: RoundExecutionResult,
+                    completed: int,
+                    total: int,
+                ) -> None:
+                    if unique_id not in candidates_by_id:
+                        raise BatchExecutorContractError(
+                            "executor reported verification progress for "
+                            f"unrequested result ID: {unique_id}",
+                        )
+                    if unique_id in reported_verification_ids:
+                        raise BatchExecutorContractError(
+                            "executor reported duplicate verification progress "
+                            f"for result ID: {unique_id}",
+                        )
+                    reported_verification_ids.add(unique_id)
+                    progress_item = self._apply_verification(
+                        primary_items[unique_id],
+                        execution,
+                        verification_mode,
+                    )
+                    self._emit_progress(
+                        progress,
+                        BatchProgressEvent(
+                            event="verification_complete",
+                            stage_name=verification_spec.stage_name,
+                            completed=completed,
+                            total=total,
+                            unique_id=unique_id,
+                            item=progress_item,
+                        ),
+                    )
+
                 verification_results = self._execute_round(
                     tuple(candidates),
                     tenant,
                     verification_spec,
+                    progress=emit_verification_complete,
                 )
+            else:
+                reported_verification_ids = set()
 
         finalized: dict[str, BatchItemResult] = {}
         candidate_ids = {entry.unique_id for entry in candidates}
@@ -264,7 +326,10 @@ class BatchAnalysisOrchestrator:
             item = primary_items[entry.unique_id]
             if entry.unique_id in candidate_ids:
                 if verification_config_error is not None:
-                    item = self._apply_verification_config_error(item)
+                    item = self._apply_verification_config_error(
+                        item,
+                        verification_config_error,
+                    )
                 else:
                     assert verification_spec is not None
                     verification = verification_results.get(entry.unique_id)
@@ -275,22 +340,23 @@ class BatchAnalysisOrchestrator:
                         verification,
                         verification_mode,
                     )
-                verification_completed += 1
-                self._emit_progress(
-                    progress,
-                    BatchProgressEvent(
-                        event="verification_complete",
-                        stage_name=(
-                            verification_spec.stage_name
-                            if verification_spec is not None
-                            else "verification"
+                if entry.unique_id not in reported_verification_ids:
+                    verification_completed += 1
+                    self._emit_progress(
+                        progress,
+                        BatchProgressEvent(
+                            event="verification_complete",
+                            stage_name=(
+                                verification_spec.stage_name
+                                if verification_spec is not None
+                                else "verification"
+                            ),
+                            completed=verification_completed,
+                            total=len(candidates),
+                            unique_id=entry.unique_id,
+                            item=item,
                         ),
-                        completed=verification_completed,
-                        total=len(candidates),
-                        unique_id=entry.unique_id,
-                        item=item,
-                    ),
-                )
+                    )
             else:
                 item = self._finalize_without_verification(item, verification_mode)
             finalized[entry.unique_id] = item
@@ -313,12 +379,14 @@ class BatchAnalysisOrchestrator:
         entries: Sequence[CallLogEntry],
         tenant: TenantConfig,
         round_spec: RoundSpec,
+        *,
+        progress: ExecutorProgress | None,
     ) -> Mapping[str, RoundExecutionResult]:
         execution_results = self._executor.execute(
             entries,
             tenant,
             round_spec,
-            progress=None,
+            progress=progress,
         )
         requested_ids = {entry.unique_id for entry in entries}
         extra_ids = set(execution_results).difference(requested_ids)
@@ -366,6 +434,28 @@ class BatchAnalysisOrchestrator:
             decision = FollowUpDecisionParser.parse_strict(result.raw_text)
         return (decision, "valid") if decision is not None else (None, "invalid")
 
+    @classmethod
+    def _build_primary_item(
+        cls,
+        entry: CallLogEntry,
+        primary: RoundExecutionResult,
+        verification_mode: str,
+    ) -> BatchItemResult:
+        decision, decision_status = cls._parse_primary(primary, verification_mode)
+        return BatchItemResult(
+            entry=entry,
+            primary=primary,
+            primary_decision=decision,
+            primary_decision_status=decision_status,
+            verification_status=(
+                "pending"
+                if verification_mode in {"shadow", "enforce"}
+                and decision is not None
+                and decision.needs_follow_up
+                else "not_requested"
+            ),
+        )
+
     @staticmethod
     def _finalize_without_verification(
         item: BatchItemResult,
@@ -393,10 +483,17 @@ class BatchAnalysisOrchestrator:
         )
 
     @staticmethod
-    def _apply_verification_config_error(item: BatchItemResult) -> BatchItemResult:
+    def _apply_verification_config_error(
+        item: BatchItemResult,
+        error_message: str,
+    ) -> BatchItemResult:
         assert item.primary_decision is not None
         return replace(
             item,
+            verification=RoundExecutionResult(
+                execution_status="error",
+                execution_error=error_message,
+            ),
             final_decision=True,
             final_reason=item.primary_decision.reason,
             final_status="fallback",

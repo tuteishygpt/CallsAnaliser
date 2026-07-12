@@ -263,40 +263,42 @@ def test_item_statuses_are_closed_sets(field, invalid_status) -> None:
         "verification_result",
         "config_error",
         "expected",
+        "expected_reason",
     ),
     [
         ("false-off", "off", _decision(False, "resolved"), None, None,
-         (False, "complete", "not_requested", "valid", "unavailable")),
+         (False, "complete", "not_requested", "valid", "unavailable"), "resolved"),
         ("false-shadow", "shadow", _decision(False, "resolved"), None, None,
-         (False, "complete", "not_requested", "valid", "unavailable")),
+         (False, "complete", "not_requested", "valid", "unavailable"), "resolved"),
         ("false-enforce", "enforce", _decision(False, "resolved"), None, None,
-         (False, "complete", "not_requested", "valid", "unavailable")),
+         (False, "complete", "not_requested", "valid", "unavailable"), "resolved"),
         ("true-off", "off", _decision(True, "call"), None, None,
-         (True, "complete", "disabled", "valid", "unavailable")),
+         (True, "complete", "disabled", "valid", "unavailable"), "call"),
         ("shadow-true", "shadow", _decision(True, "call"), _decision(True, "yes"), None,
-         (True, "complete", "shadow_complete", "valid", "valid")),
+         (True, "complete", "shadow_complete", "valid", "valid"), "call"),
         ("shadow-false", "shadow", _decision(True, "call"), _decision(False, "no"), None,
-         (True, "complete", "shadow_complete", "valid", "valid")),
+         (True, "complete", "shadow_complete", "valid", "valid"), "call"),
         ("enforce-true", "enforce", _decision(True, "call"), _decision(True, "yes"), None,
-         (True, "complete", "complete", "valid", "valid")),
+         (True, "complete", "complete", "valid", "valid"), "yes"),
         ("enforce-false", "enforce", _decision(True, "call"), _decision(False, "no"), None,
-         (False, "complete", "complete", "valid", "valid")),
+         (False, "complete", "complete", "valid", "valid"), "no"),
         ("shadow-error", "shadow", _decision(True, "call"), _error(), None,
-         (True, "fallback", "failed", "valid", "unavailable")),
+         (True, "fallback", "failed", "valid", "unavailable"), "call"),
         ("enforce-missing", "enforce", _decision(True, "call"), None, None,
-         (True, "fallback", "failed", "valid", "unavailable")),
+         (True, "fallback", "failed", "valid", "unavailable"), "call"),
         ("shadow-invalid", "shadow", _decision(True, "call"), _success("not json"), None,
-         (True, "fallback", "failed", "valid", "invalid")),
+         (True, "fallback", "failed", "valid", "invalid"), "call"),
         ("shadow-config", "shadow", _decision(True, "call"), None, "missing verifier",
-         (True, "fallback", "config_error", "valid", "unavailable")),
+         (True, "fallback", "config_error", "valid", "unavailable"), "call"),
         ("enforce-config", "enforce", _decision(True, "call"), None, "missing verifier",
-         (True, "fallback", "config_error", "valid", "unavailable")),
+         (True, "fallback", "config_error", "valid", "unavailable"), "call"),
         ("primary-error", "enforce", _error(), None, None,
-         (None, "error", "not_requested", "unavailable", "unavailable")),
+         (None, "error", "not_requested", "unavailable", "unavailable"), "boom"),
         ("primary-missing", "off", None, None, None,
-         (None, "error", "not_requested", "unavailable", "unavailable")),
+         (None, "error", "not_requested", "unavailable", "unavailable"),
+         "executor omitted requested result"),
         ("primary-invalid", "shadow", _success("not json"), None, None,
-         (None, "invalid", "not_requested", "invalid", "unavailable")),
+         (None, "invalid", "not_requested", "invalid", "unavailable"), None),
     ],
     ids=lambda value: value if isinstance(value, str) else None,
 )
@@ -308,6 +310,7 @@ def test_approved_decision_matrix(
     verification_result,
     config_error,
     expected,
+    expected_reason,
 ) -> None:
     del case
     primary_results = {} if primary_result is None else {"one": primary_result}
@@ -339,6 +342,7 @@ def test_approved_decision_matrix(
         item.primary_decision_status,
         item.verification_decision_status,
     ) == expected
+    assert item.final_reason == expected_reason
     if item.verification_decision_status == "valid":
         assert item.verification_decision is not None
 
@@ -475,6 +479,9 @@ def test_config_errors_count_as_requested_and_failed_without_round_two(tenant) -
     assert result.verification_requested == 1
     assert result.verification_failed == 1
     assert result.final_follow_up == 1
+    assert result.items[0].verification is not None
+    assert result.items[0].verification.execution_status == "error"
+    assert result.items[0].verification.execution_error == "bad prompt"
 
 
 def test_progress_events_are_deterministic_and_primary_items_remain_pending(tenant) -> None:
@@ -507,8 +514,54 @@ def test_progress_events_are_deterministic_and_primary_items_remain_pending(tena
     assert [event.unique_id for event in primary_events] == ["yes", "no"]
     assert all(event.item.final_decision is None for event in primary_events)
     assert all(event.item.final_status == "pending" for event in primary_events)
-    assert executor.execute_calls[0][4] is None
-    assert executor.execute_calls[1][4] is None
+    assert primary_events[0].item.verification_status == "pending"
+    assert primary_events[1].item.verification_status == "not_requested"
+    assert callable(executor.execute_calls[0][4])
+    assert callable(executor.execute_calls[1][4])
+
+
+def test_executor_item_progress_is_emitted_before_execute_returns(tenant) -> None:
+    events: list[BatchProgressEvent] = []
+
+    class LiveExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del tenant, bypass_cache
+            result = (
+                _decision(True, "primary")
+                if round_spec.stage_name == "primary"
+                else _decision(False, "verified")
+            )
+            assert progress is not None
+            progress(entries[0].unique_id, result, 1, 1)
+            expected_event = (
+                "primary_complete"
+                if round_spec.stage_name == "primary"
+                else "verification_complete"
+            )
+            assert events[-1].event == expected_event
+            return {entries[0].unique_id: result}
+
+    result = BatchAnalysisOrchestrator(LiveExecutor({})).run(
+        [_entry("one")], tenant, _round_spec(), verification_mode="enforce",
+        verification_spec=_verification_spec(), progress=events.append,
+    )
+
+    assert [event.event for event in events] == [
+        "primary_started",
+        "primary_complete",
+        "verification_started",
+        "verification_complete",
+        "run_complete",
+    ]
+    assert result.items[0].final_decision is False
 
 
 def test_progress_callback_exceptions_are_logged_and_ignored(tenant, caplog) -> None:
