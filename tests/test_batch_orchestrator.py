@@ -20,6 +20,9 @@ from calls_analyser.services.batch_orchestrator import (
     VERIFICATION_STATUSES,
 )
 from calls_analyser.services.tenant import TenantConfig
+from calls_analyser.services.prompt import PromptService, PromptTemplate
+from calls_analyser.services.registry import ProviderRegistry
+from calls_analyser.services.tenant_settings import TenantRuntimeSettings
 
 
 def _entry(unique_id: str) -> CallLogEntry:
@@ -142,6 +145,150 @@ def _decision(value: bool, reason: str = "A reason") -> RoundExecutionResult:
 
 def _error() -> RoundExecutionResult:
     return replace(_success(), execution_status="error", execution_error="boom")
+
+
+class _AIProvider:
+    def __init__(self, provider_name: str) -> None:
+        self.provider_name = provider_name
+
+
+def _configured_orchestrator(executor, *, verification_body="Verify strictly."):
+    prompts = PromptService(
+        {
+            "primary": PromptTemplate("primary", "Primary", "Primary body", 3),
+            "verify": PromptTemplate("verify", "Verify", verification_body, 7),
+            "simple": PromptTemplate("simple", "Simple", "Fallback", 1),
+        },
+        tenant_templates={
+            "tenant-a": {
+                "primary": PromptTemplate("primary", "Tenant primary", "Tenant body", 11),
+                "verify": PromptTemplate("verify", "Tenant verify", verification_body, 13),
+            },
+        },
+    )
+    registry = ProviderRegistry()
+    registry.register("primary-model", _AIProvider("primary-provider"))
+    registry.register("verification-model", _AIProvider("verification-provider"))
+    return BatchAnalysisOrchestrator(executor, prompt_service=prompts, ai_registry=registry)
+
+
+def _runtime_settings(**overrides) -> TenantRuntimeSettings:
+    values = dict(
+        batch_model_key="primary-model",
+        batch_language_code="de",
+        follow_up_verification_mode="enforce",
+        follow_up_verification_model_key="verification-model",
+        follow_up_verification_prompt_key="verify",
+    )
+    values.update(overrides)
+    return TenantRuntimeSettings(**values)
+
+
+def test_resolves_tenant_prompt_versions_models_providers_and_language(tenant) -> None:
+    orchestrator = _configured_orchestrator(_Executor({}))
+
+    primary, verification, error = orchestrator.resolve_round_specs(
+        tenant,
+        _runtime_settings(),
+        primary_prompt_key="primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert error is None
+    assert primary.prompt_text == "Tenant body"
+    assert primary.prompt_version == 11
+    assert primary.model_key == "primary-model"
+    assert primary.provider == "primary-provider"
+    assert primary.language == "de"
+    assert verification is not None
+    assert verification.prompt_text == "Verify strictly."
+    assert verification.prompt_version == 13
+    assert verification.model_key == "verification-model"
+    assert verification.provider == "verification-provider"
+    assert verification.language == "de"
+
+
+def test_primary_custom_override_is_isolated_from_verification(tenant) -> None:
+    primary, verification, error = _configured_orchestrator(_Executor({})).resolve_round_specs(
+        tenant,
+        _runtime_settings(),
+        primary_prompt_key="primary",
+        primary_custom_prompt="  custom primary  ",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert error is None
+    assert primary.prompt_text == "custom primary"
+    assert primary.custom_fragment == "custom primary"
+    assert verification is not None
+    assert verification.prompt_text == "Verify strictly."
+    assert verification.custom_fragment == ""
+
+
+@pytest.mark.parametrize(
+    ("settings", "verification_body", "error_match"),
+    [
+        (_runtime_settings(follow_up_verification_model_key="missing"), "Verify", "not registered"),
+        (_runtime_settings(), "   ", "empty"),
+        (_runtime_settings(follow_up_verification_prompt_key="primary"), "Verify", "differ"),
+    ],
+)
+def test_invalid_verification_config_is_returned_not_raised(
+    tenant, settings, verification_body, error_match
+) -> None:
+    primary, verification, error = _configured_orchestrator(
+        _Executor({}), verification_body=verification_body
+    ).resolve_round_specs(
+        tenant,
+        settings,
+        primary_prompt_key="primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert primary.stage_name == "primary"
+    assert verification is None
+    assert error is not None and error_match in error
+
+
+def test_defensively_rejects_identical_round_cache_identity(tenant, monkeypatch) -> None:
+    orchestrator = _configured_orchestrator(_Executor({}))
+    monkeypatch.setattr(orchestrator, "_round_cache_identity", lambda **_kwargs: "same")
+
+    _primary, verification, error = orchestrator.resolve_round_specs(
+        tenant,
+        _runtime_settings(),
+        primary_prompt_key="primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert verification is None
+    assert error is not None and "cache identity" in error
+
+
+def test_invalid_verification_config_runs_primary_and_falls_back_each_positive(tenant) -> None:
+    executor = _RoundExecutor(
+        {"primary": {"yes-1": _decision(True), "no": _decision(False), "yes-2": _decision(True)}}
+    )
+    orchestrator = _configured_orchestrator(executor)
+
+    result = orchestrator.run_with_settings(
+        [_entry("yes-1"), _entry("no"), _entry("yes-2")],
+        tenant,
+        _runtime_settings(follow_up_verification_model_key="missing"),
+        primary_prompt_key="primary",
+        primary_usage_mode="ui_mass",
+        verification_usage_mode="ui_mass_verify",
+    )
+
+    assert [call[2].stage_name for call in executor.execute_calls] == ["primary"]
+    assert [item.verification_status for item in result.items] == [
+        "config_error", "not_requested", "config_error"
+    ]
+    assert [item.final_decision for item in result.items] == [True, False, True]
 
 
 @pytest.fixture

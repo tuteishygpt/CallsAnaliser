@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import logging
+import json
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from calls_analyser.domain.models import CallLogEntry
 from calls_analyser.services.analysis import CacheKey
 from calls_analyser.services.follow_up import FollowUpDecision, FollowUpDecisionParser
+from calls_analyser.services.prompt import PromptService
+from calls_analyser.services.registry import ProviderRegistry
 from calls_analyser.services.tenant import TenantConfig
+from calls_analyser.services.tenant_settings import TenantRuntimeSettings
 
 
 EXECUTION_STATUSES = frozenset({"success", "error", "missing"})
@@ -156,8 +160,142 @@ class BatchExecutorContractError(RuntimeError):
 
 
 class BatchAnalysisOrchestrator:
-    def __init__(self, executor: BatchRoundExecutor) -> None:
+    def __init__(
+        self,
+        executor: BatchRoundExecutor,
+        *,
+        prompt_service: PromptService | None = None,
+        ai_registry: ProviderRegistry[Any] | None = None,
+    ) -> None:
         self._executor = executor
+        self._prompt_service = prompt_service
+        self._ai_registry = ai_registry
+
+    def resolve_round_specs(
+        self,
+        tenant: TenantConfig,
+        settings: TenantRuntimeSettings,
+        *,
+        primary_prompt_key: str,
+        primary_custom_prompt: str = "",
+        primary_usage_mode: str,
+        verification_usage_mode: str,
+    ) -> tuple[RoundSpec, RoundSpec | None, str | None]:
+        """Resolve tenant-aware round inputs without making verification fatal."""
+        if self._prompt_service is None or self._ai_registry is None:
+            raise RuntimeError(
+                "round-spec resolution requires prompt_service and ai_registry",
+            )
+
+        primary = self._build_round_spec(
+            tenant,
+            model_key=settings.batch_model_key,
+            prompt_key=primary_prompt_key,
+            custom_prompt=primary_custom_prompt,
+            language=settings.batch_language_code,
+            usage_mode=primary_usage_mode,
+            stage_name="primary",
+        )
+        mode = settings.follow_up_verification_mode
+        if mode == "off":
+            return primary, None, None
+
+        verification_prompt_key = settings.follow_up_verification_prompt_key
+        if verification_prompt_key == primary.prompt_key:
+            return primary, None, "verification prompt key must differ from primary prompt key"
+        try:
+            verification = self._build_round_spec(
+                tenant,
+                model_key=settings.follow_up_verification_model_key,
+                prompt_key=verification_prompt_key,
+                custom_prompt="",
+                language=settings.batch_language_code,
+                usage_mode=verification_usage_mode,
+                stage_name="verification",
+            )
+        except (KeyError, ValueError) as exc:
+            return primary, None, str(exc)
+        if not verification.prompt_text.strip():
+            return primary, None, "verification prompt body is empty"
+        if verification.cache_identity == primary.cache_identity:
+            return primary, None, "verification cache identity matches primary cache identity"
+        return primary, verification, None
+
+    def run_with_settings(
+        self,
+        entries: Sequence[CallLogEntry],
+        tenant: TenantConfig,
+        settings: TenantRuntimeSettings,
+        *,
+        primary_prompt_key: str,
+        primary_custom_prompt: str = "",
+        primary_usage_mode: str,
+        verification_usage_mode: str,
+        progress: BatchProgressCallback | None = None,
+    ) -> BatchRunResult:
+        primary, verification, config_error = self.resolve_round_specs(
+            tenant,
+            settings,
+            primary_prompt_key=primary_prompt_key,
+            primary_custom_prompt=primary_custom_prompt,
+            primary_usage_mode=primary_usage_mode,
+            verification_usage_mode=verification_usage_mode,
+        )
+        return self.run(
+            entries,
+            tenant,
+            primary,
+            verification_mode=settings.follow_up_verification_mode,
+            verification_spec=verification,
+            verification_config_error=config_error,
+            progress=progress,
+        )
+
+    def _build_round_spec(
+        self,
+        tenant: TenantConfig,
+        *,
+        model_key: str,
+        prompt_key: str,
+        custom_prompt: str,
+        language: str,
+        usage_mode: str,
+        stage_name: str,
+    ) -> RoundSpec:
+        assert self._prompt_service is not None
+        assert self._ai_registry is not None
+        provider = self._ai_registry.get(model_key)
+        provider_name = str(getattr(provider, "provider_name", model_key))
+        template = self._prompt_service.get_prompt(
+            prompt_key,
+            tenant_id=tenant.tenant_id,
+        )
+        custom_fragment = custom_prompt.strip()
+        prompt_text = custom_fragment or template.body
+        cache_identity = self._round_cache_identity(
+            prompt_key=prompt_key,
+            prompt_version=template.version,
+            provider=provider_name,
+            model_key=model_key,
+            custom_fragment=custom_fragment,
+        )
+        return RoundSpec(
+            model_key=model_key,
+            prompt_key=prompt_key,
+            prompt_text=prompt_text,
+            prompt_version=template.version,
+            custom_fragment=custom_fragment,
+            language=language,
+            usage_mode=usage_mode,
+            stage_name=stage_name,
+            provider=provider_name,
+            model_identity=model_key,
+            cache_identity=cache_identity,
+        )
+
+    @staticmethod
+    def _round_cache_identity(**identity: Any) -> str:
+        return json.dumps(identity, sort_keys=True, separators=(",", ":"))
 
     def run(
         self,
