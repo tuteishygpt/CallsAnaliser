@@ -19,6 +19,9 @@ class TenantRuntimeSettings:
     batch_language_code: str = "auto"
     batch_enabled: bool = True
     batch_size: int = 20
+    follow_up_verification_mode: str = "off"
+    follow_up_verification_model_key: str = ""
+    follow_up_verification_prompt_key: str = ""
     scheduler_enabled: bool = False
     scheduler_mode: str = "cron"
     scheduler_cron_time: str = "01:00"
@@ -134,6 +137,34 @@ class TenantSettingsService:
                 fallback_names=("batch_size", "BATCH_SIZE"),
                 hard_default=20,
                 min_value=1,
+            ),
+            follow_up_verification_mode=self._resolve_choice(
+                tenant_id,
+                "follow_up_verification_mode",
+                fallback_sources=[],
+                fallback_names=(),
+                hard_default="off",
+                allowed={"off", "shadow", "enforce"},
+            ),
+            follow_up_verification_model_key=self._resolve_str(
+                tenant_id,
+                "follow_up_verification_model_key",
+                fallback_sources=[self._defaults],
+                fallback_names=(
+                    "follow_up_verification_model_key",
+                    "FOLLOW_UP_VERIFICATION_MODEL_KEY",
+                ),
+                hard_default="",
+            ),
+            follow_up_verification_prompt_key=self._resolve_str(
+                tenant_id,
+                "follow_up_verification_prompt_key",
+                fallback_sources=[self._defaults],
+                fallback_names=(
+                    "follow_up_verification_prompt_key",
+                    "FOLLOW_UP_VERIFICATION_PROMPT_KEY",
+                ),
+                hard_default="",
             ),
             scheduler_enabled=self._resolve_bool(
                 tenant_id,

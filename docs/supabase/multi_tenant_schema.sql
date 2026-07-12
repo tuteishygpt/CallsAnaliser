@@ -36,6 +36,18 @@ create table if not exists public.tenant_secrets (
     primary key (tenant_id, key)
 );
 
+-- Follow-up verification runtime settings stored in tenant_settings:
+--   follow_up_verification_mode: allowed values are off, shadow, or enforce; defaults to off
+--     when the tenant has no value or supplies an invalid value.
+--   follow_up_verification_model_key: provider model key used by the verification pass.
+--   follow_up_verification_prompt_key: active tenant/global prompt-template key used by the pass.
+-- Keeping the mode absent preserves the off default for existing tenants. Model and prompt
+-- keys may still resolve from application defaults without enabling verification.
+-- Example opt-in values (replace tenant-id and keys for the target tenant):
+-- insert into public.tenant_settings (tenant_id, key, value) values
+--   ('tenant-id', 'follow_up_verification_mode', '"shadow"'::jsonb),
+--   ('tenant-id', 'follow_up_verification_model_key', '"models/gemini-2.5-flash-lite"'::jsonb),
+--   ('tenant-id', 'follow_up_verification_prompt_key', '"FOLLOW_UP_VERIFICATION_PROMPT"'::jsonb);
 create table if not exists public.tenant_settings (
     tenant_id text not null references public.tenants(id) on delete cascade,
     key text not null,

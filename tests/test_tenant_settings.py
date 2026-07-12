@@ -31,12 +31,64 @@ def _defaults(**overrides):
         "BATCH_MODEL_KEY": "models/fallback-batch",
         "BATCH_LANGUAGE_CODE": "ru",
         "BATCH_CUSTOM": "off",
+        "FOLLOW_UP_VERIFICATION_MODEL_KEY": "models/default-verifier",
+        "FOLLOW_UP_VERIFICATION_PROMPT_KEY": "FOLLOW_UP_VERIFICATION_PROMPT",
         "EMAIL_TO": "global-to@example.com",
         "EMAIL_FROM": "global-from@example.com",
         "EMAIL_FROM_NAME": "Global reports",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_follow_up_verification_defaults_to_off_with_configured_model_and_prompt() -> None:
+    service = TenantSettingsService(
+        InMemoryTenantSettingsRepository(),
+        batch_params=_batch_params(),
+        defaults=_defaults(FOLLOW_UP_VERIFICATION_MODE="enforce"),
+    )
+
+    settings = service.resolve("existing-tenant")
+
+    assert settings.follow_up_verification_mode == "off"
+    assert settings.follow_up_verification_model_key == "models/default-verifier"
+    assert settings.follow_up_verification_prompt_key == "FOLLOW_UP_VERIFICATION_PROMPT"
+
+
+def test_tenant_can_override_follow_up_verification_settings() -> None:
+    repository = InMemoryTenantSettingsRepository(
+        settings={
+            "tenant-a": {
+                "follow_up_verification_mode": "SHADOW",
+                "follow_up_verification_model_key": "models/tenant-verifier",
+                "follow_up_verification_prompt_key": "tenant-verification-prompt",
+            }
+        }
+    )
+    service = TenantSettingsService(
+        repository,
+        batch_params=_batch_params(),
+        defaults=_defaults(),
+    )
+
+    settings = service.resolve("tenant-a")
+
+    assert settings.follow_up_verification_mode == "shadow"
+    assert settings.follow_up_verification_model_key == "models/tenant-verifier"
+    assert settings.follow_up_verification_prompt_key == "tenant-verification-prompt"
+
+
+def test_invalid_follow_up_verification_mode_is_safely_disabled() -> None:
+    repository = InMemoryTenantSettingsRepository(
+        settings={"tenant-a": {"follow_up_verification_mode": "audit"}}
+    )
+    service = TenantSettingsService(
+        repository,
+        batch_params=_batch_params(),
+        defaults=_defaults(FOLLOW_UP_VERIFICATION_MODE="enforce"),
+    )
+
+    assert service.resolve("tenant-a").follow_up_verification_mode == "off"
 
 
 def test_tenant_setting_overrides_batch_fallbacks() -> None:

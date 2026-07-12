@@ -38,6 +38,24 @@ Output format (must be valid JSON; no extra text):
 }"""
 )
 
+FOLLOW_UP_VERIFICATION_PROMPT_KEY = "FOLLOW_UP_VERIFICATION_PROMPT"
+FOLLOW_UP_VERIFICATION_PROMPT_TEXT = (
+    """You are independently analyzing the original call audio between a client and a call center employee.
+Do not use or infer from any output produced by another analysis pass.
+Determine whether the call needs follow-up or additional attention based only on the audio's complete outcome.
+
+A call needs follow-up when it is unresolved, requires a promised action or callback, contains an unanswered request, or presents a complaint, service failure, payment issue, booking issue, or material risk that still needs attention.
+
+Return exactly one valid JSON object and no other text, markdown, or code fence:
+{
+  "needs_follow_up": true,
+  "reason": "non-empty one-sentence reason grounded in the call audio"
+}
+
+"needs_follow_up" must be a JSON boolean true or false (not a string).
+"reason" must be a non-empty JSON string that briefly explains the decision."""
+)
+
 
 # ---------------------------
 # Prompt templates (UI tab)
@@ -90,6 +108,11 @@ PROMPTS = {
         title="Batch Prompt",
         body=_BATCH_PROMPT_BODY,
     ),
+    FOLLOW_UP_VERIFICATION_PROMPT_KEY: PromptTemplate(
+        key=FOLLOW_UP_VERIFICATION_PROMPT_KEY,
+        title="Follow-up Verification",
+        body=FOLLOW_UP_VERIFICATION_PROMPT_TEXT,
+    ),
 }
 
 # ---------------------------
@@ -111,6 +134,7 @@ MODEL_CANDIDATES = [
 BATCH_MODEL_KEY = "models/gemini-2.5-flash-lite"
 BATCH_PROMPT_KEY = "BATCH_PROMPT"
 BATCH_PROMPT_TEXT = _BATCH_PROMPT_BODY
+FOLLOW_UP_VERIFICATION_MODEL_KEY = BATCH_MODEL_KEY
 # ISO language code for batch (app converts to Language enum)
 BATCH_LANGUAGE_CODE = "ru"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calls_analyser import config
 from calls_analyser.services.prompt import PromptService, PromptTemplate
 
 
@@ -113,3 +114,26 @@ def test_list_templates_merges_tenant_overrides_without_mutating_global_template
     assert tenant_templates["simple"].title == "Tenant Simple"
     assert service.get_prompt("simple").title == "Simple"
     assert set(service.list_templates()) == {"simple", "detailed"}
+
+
+def test_default_follow_up_verification_prompt_is_discoverable() -> None:
+    prompt_key = config.FOLLOW_UP_VERIFICATION_PROMPT_KEY
+
+    template = config.PROMPTS[prompt_key]
+
+    assert template.key == prompt_key
+    assert template.body == config.FOLLOW_UP_VERIFICATION_PROMPT_TEXT
+
+
+def test_default_follow_up_verification_prompt_is_independent_and_strict() -> None:
+    body = config.PROMPTS[config.FOLLOW_UP_VERIFICATION_PROMPT_KEY].body.lower()
+
+    assert "independently" in body
+    assert "original call audio" in body
+    assert "primary decision" not in body
+    assert "primary reason" not in body
+    assert "valid json object" in body
+    assert '"needs_follow_up": true' in body
+    assert "json boolean" in body
+    assert "not a string" in body
+    assert "non-empty" in body

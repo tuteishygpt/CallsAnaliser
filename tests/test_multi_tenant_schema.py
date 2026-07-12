@@ -37,3 +37,13 @@ def test_multi_tenant_schema_declares_required_tables_and_cache_version() -> Non
         "analysis_results",
     ):
         assert f"alter table public.{table_name} enable row level security" in sql
+
+
+def test_multi_tenant_schema_documents_follow_up_verification_settings() -> None:
+    sql = SCHEMA_PATH.read_text(encoding="utf-8").lower()
+
+    assert "follow_up_verification_mode" in sql
+    assert "follow_up_verification_model_key" in sql
+    assert "follow_up_verification_prompt_key" in sql
+    assert "off, shadow, or enforce" in sql
+    assert "defaults to off" in sql
