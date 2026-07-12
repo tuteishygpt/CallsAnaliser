@@ -197,6 +197,23 @@ class BatchAnalysisOrchestrator:
         reported_primary_ids: set[str] = set()
         primary_completed = 0
 
+        def emit_primary_progress(
+            unique_id: str,
+            _execution: RoundExecutionResult,
+            executor_completed: int,
+            executor_total: int,
+        ) -> None:
+            self._emit_progress(
+                progress,
+                BatchProgressEvent(
+                    event="primary_progress",
+                    stage_name=round_spec.stage_name,
+                    completed=executor_completed,
+                    total=executor_total,
+                    unique_id=unique_id,
+                ),
+            )
+
         def emit_primary_complete(
             unique_id: str,
             execution: RoundExecutionResult,
@@ -234,6 +251,7 @@ class BatchAnalysisOrchestrator:
             round_spec,
             parse=lambda result: self._parse_primary(result, verification_mode),
             progress=emit_primary_complete,
+            live_progress=emit_primary_progress,
         )
 
         primary_items: dict[str, BatchItemResult] = {}
@@ -279,6 +297,23 @@ class BatchAnalysisOrchestrator:
                 }
                 reported_verification_ids: set[str] = set()
 
+                def emit_verification_progress(
+                    unique_id: str,
+                    _execution: RoundExecutionResult,
+                    executor_completed: int,
+                    executor_total: int,
+                ) -> None:
+                    self._emit_progress(
+                        progress,
+                        BatchProgressEvent(
+                            event="verification_progress",
+                            stage_name=verification_spec.stage_name,
+                            completed=executor_completed,
+                            total=executor_total,
+                            unique_id=unique_id,
+                        ),
+                    )
+
                 def emit_verification_complete(
                     unique_id: str,
                     execution: RoundExecutionResult,
@@ -321,6 +356,7 @@ class BatchAnalysisOrchestrator:
                     verification_spec,
                     parse=self._parse_strict,
                     progress=emit_verification_complete,
+                    live_progress=emit_verification_progress,
                 )
             else:
                 reported_verification_ids = set()
@@ -390,6 +426,7 @@ class BatchAnalysisOrchestrator:
             tuple[FollowUpDecision | None, str],
         ],
         progress: ExecutorProgress | None,
+        live_progress: ExecutorProgress | None,
     ) -> Mapping[str, RoundExecutionResult]:
         ordered_entries = tuple(entries)
         buffered_initial_progress: list[tuple[str, int, int]] = []
@@ -400,7 +437,7 @@ class BatchAnalysisOrchestrator:
             suppress_retryable: bool,
             buffer: list[tuple[str, int, int]] | None = None,
         ) -> ExecutorProgress | None:
-            if progress is None:
+            if progress is None and live_progress is None:
                 return None
             attempt_ids = {entry.unique_id for entry in attempt_entries}
             reported_ids: set[str] = set()
@@ -422,6 +459,10 @@ class BatchAnalysisOrchestrator:
                         f"{unique_id}",
                     )
                 reported_ids.add(unique_id)
+                if live_progress is not None:
+                    live_progress(unique_id, execution, completed, total)
+                if progress is None:
+                    return
                 if suppress_retryable and not self._is_parse_valid(execution, parse):
                     return
                 if buffer is not None:

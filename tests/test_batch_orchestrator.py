@@ -556,7 +556,7 @@ def test_progress_events_are_deterministic_and_primary_items_remain_pending(tena
     assert callable(executor.execute_calls[1][4])
 
 
-def test_executor_item_progress_is_preserved_when_returned_result_is_valid(
+def test_executor_item_progress_is_live_and_terminal_result_is_reconciled(
     tenant,
 ) -> None:
     events: list[BatchProgressEvent] = []
@@ -579,6 +579,14 @@ def test_executor_item_progress_is_preserved_when_returned_result_is_valid(
             )
             assert progress is not None
             progress(entries[0].unique_id, result, 1, 1)
+            expected_event = (
+                "primary_progress"
+                if round_spec.stage_name == "primary"
+                else "verification_progress"
+            )
+            assert events[-1].event == expected_event
+            assert events[-1].unique_id == "one"
+            assert events[-1].item is None
             return {entries[0].unique_id: result}
 
     result = BatchAnalysisOrchestrator(LiveExecutor({})).run(
@@ -588,8 +596,10 @@ def test_executor_item_progress_is_preserved_when_returned_result_is_valid(
 
     assert [event.event for event in events] == [
         "primary_started",
+        "primary_progress",
         "primary_complete",
         "verification_started",
+        "verification_progress",
         "verification_complete",
         "run_complete",
     ]
@@ -890,6 +900,9 @@ def test_initial_primary_callback_is_reconciled_with_missing_retry_outcome(
     )
 
     item_events = [event for event in events if event.event == "primary_complete"]
+    progress_events = [event for event in events if event.event == "primary_progress"]
+    assert len(progress_events) == 1
+    assert progress_events[0].item is None
     assert len(item_events) == 1
     assert item_events[0].item.primary.execution_status == "missing"
     assert item_events[0].item.primary_decision is None
@@ -930,11 +943,58 @@ def test_initial_verification_callback_is_replaced_by_retry_callback_outcome(
     item_events = [
         event for event in events if event.event == "verification_complete"
     ]
+    progress_events = [
+        event for event in events if event.event == "verification_progress"
+    ]
+    assert len(progress_events) == 2
+    assert all(event.item is None for event in progress_events)
     assert len(item_events) == 1
     assert item_events[0].item.verification_decision is not None
     assert item_events[0].item.verification_decision.needs_follow_up is True
     assert item_events[0].item.final_reason == "retry mapping"
     assert result.items[0].final_reason == "retry mapping"
+
+
+def test_invalid_validation_is_recorded_before_retry_and_terminal_progress(
+    tenant,
+) -> None:
+    operations: list[tuple[str, object]] = []
+
+    class OrderedRetryExecutor(_Executor):
+        def execute(
+            self,
+            entries,
+            tenant,
+            round_spec,
+            *,
+            bypass_cache=False,
+            progress=None,
+        ) -> dict[str, RoundExecutionResult]:
+            del entries, tenant, round_spec
+            operations.append(("execute", bypass_cache))
+            if bypass_cache:
+                return {"one": _decision(False, "retry")}
+            return {"one": _error()}
+
+        def record_validation(self, round_spec, validated_results) -> None:
+            del round_spec
+            operations.append(("validation", dict(validated_results)))
+
+    def record_progress(event: BatchProgressEvent) -> None:
+        if event.event == "primary_complete":
+            operations.append(("terminal", event.item.primary.raw_text))
+
+    BatchAnalysisOrchestrator(OrderedRetryExecutor({})).run(
+        [_entry("one")], tenant, _round_spec(), progress=record_progress,
+    )
+
+    assert operations == [
+        ("execute", False),
+        ("validation", {"one": False}),
+        ("execute", True),
+        ("validation", {"one": True}),
+        ("terminal", _decision(False, "retry").raw_text),
+    ]
 
 
 def test_retry_progress_rejects_an_id_not_requested_for_that_attempt(tenant) -> None:
