@@ -71,14 +71,16 @@ def spec(*, stage="primary", mode="ui_mass"):  # noqa: ANN201
 
 
 def test_sequential_executor_returns_raw_results_cache_hits_errors_and_progress() -> None:
-    executor, ai, _usage = make_executor()
+    cache = RecordingCache()
+    executor, ai, _usage = make_executor(cache=cache)
     tenant = TenantConfig(tenant_id="one", vochi_base_url="https://api")
     entries = [CallLogEntry(unique_id="ok"), CallLogEntry(unique_id="bad")]
     progress = []
+    round_spec = spec()
 
-    first = executor.execute(entries, tenant, spec(), progress=lambda *args: progress.append(args))
-    cached = executor.execute(entries[:1], tenant, spec())
-    executor.record_validation(spec(), {"ok": True})
+    first = executor.execute(entries, tenant, round_spec, progress=lambda *args: progress.append(args))
+    cached = executor.execute(entries[:1], tenant, round_spec)
+    executor.record_validation(round_spec, {"ok": True})
 
     assert first["ok"].raw_text == "raw-1"
     assert first["ok"].execution_status == "success"
@@ -86,21 +88,24 @@ def test_sequential_executor_returns_raw_results_cache_hits_errors_and_progress(
     assert first["bad"].execution_status == "error"
     assert first["bad"].execution_error == "provider failed"
     assert cached["ok"].from_cache is True
-    assert executor._latest_results["primary"]["ok"].metadata["batch_stage"] == "primary"  # noqa: SLF001
-    assert executor._latest_results["primary"]["ok"].metadata["batch_execution"] == "ui_sequential"  # noqa: SLF001
-    assert executor._latest_results["primary"]["ok"].metadata["decision_valid"] is True  # noqa: SLF001
+    cached_result = cache[cached["ok"].cache_key]
+    assert cached_result.metadata["batch_stage"] == "primary"
+    assert cached_result.metadata["batch_execution"] == "ui_sequential"
+    assert cached_result.metadata["decision_valid"] is True
     assert ai.calls == 2
     assert [(p[0], p[2], p[3]) for p in progress] == [("ok", 1, 2), ("bad", 2, 2)]
 
 
 def test_sequential_executor_records_stage_modes_and_validation_acknowledgement() -> None:
-    executor, _ai, usage = make_executor()
+    cache = RecordingCache()
+    executor, _ai, usage = make_executor(cache=cache)
     tenant = TenantConfig(tenant_id="one", vochi_base_url="https://api")
-    primary = executor.execute([CallLogEntry(unique_id="a")], tenant, spec())
+    primary_spec = spec()
+    primary = executor.execute([CallLogEntry(unique_id="a")], tenant, primary_spec)
     verify_spec = spec(stage="verification", mode="ui_mass_verify")
     verification = executor.execute([CallLogEntry(unique_id="b")], tenant, verify_spec)
 
-    executor.record_validation(spec(), {"a": True})
+    executor.record_validation(primary_spec, {"a": True})
     executor.record_validation(verify_spec, {"b": False})
 
     assert [call["mode"] for call in usage.calls] == ["ui_mass", "ui_mass_verify"]
@@ -108,13 +113,13 @@ def test_sequential_executor_records_stage_modes_and_validation_acknowledgement(
     assert verification["b"].raw_text == "raw-2"
     assert primary["a"].cache_identity == "identity"
     assert verification["b"].usage_metadata == {"totalTokenCount": 3}
-    assert executor._latest_results["primary"]["a"].metadata == {  # noqa: SLF001
+    assert cache[primary["a"].cache_key].metadata == {
         "usage_metadata": {"totalTokenCount": 3},
         "batch_stage": "primary",
         "batch_execution": "ui_sequential",
         "decision_valid": True,
     }
-    assert executor._latest_results["verification"]["b"].metadata["decision_valid"] is False  # noqa: SLF001
+    assert cache[verification["b"].cache_key].metadata["decision_valid"] is False
 
 
 def test_validation_acknowledgement_upserts_metadata_to_durable_cache() -> None:
@@ -130,6 +135,23 @@ def test_validation_acknowledgement_upserts_metadata_to_durable_cache() -> None:
 
     assert len(cache.writes) == 2
     assert cache.writes[-1][1]["decision_valid"] is True
+
+
+def test_interleaved_validation_is_scoped_to_its_round_execution() -> None:
+    cache = RecordingCache()
+    executor, _ai, _usage = make_executor(cache=cache)
+    entry = [CallLogEntry(unique_id="same")]
+    first_spec = spec()
+    second_spec = spec()
+
+    executor.execute(entry, TenantConfig("one", "https://api"), first_spec)
+    executor.execute(entry, TenantConfig("two", "https://api"), second_spec)
+    executor.record_validation(first_spec, {"same": True})
+    executor.record_validation(second_spec, {"same": False})
+
+    validation_writes = cache.writes[2:]
+    assert [write[0][0] for write in validation_writes] == ["one", "two"]
+    assert [write[1]["decision_valid"] for write in validation_writes] == [True, False]
 
 
 def test_sequential_executor_isolates_same_identity_between_tenants() -> None:

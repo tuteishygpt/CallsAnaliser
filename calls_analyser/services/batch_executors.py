@@ -1,6 +1,7 @@
 """Execution adapters for batch analysis rounds."""
 from __future__ import annotations
 
+from collections import deque
 from typing import Mapping, Sequence
 
 from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
@@ -18,8 +19,16 @@ class SequentialBatchExecutor:
 
     def __init__(self, analysis_service: AnalysisService) -> None:
         self._analysis_service = analysis_service
-        self._latest_results: dict[str, dict[str, AnalysisResult]] = {}
-        self._latest_cache_keys: dict[str, dict[str, CacheKey]] = {}
+        self._pending_runs: dict[
+            int,
+            deque[
+                tuple[
+                    RoundSpec,
+                    dict[str, AnalysisResult],
+                    dict[str, CacheKey],
+                ]
+            ],
+        ] = {}
 
     def execute(
         self,
@@ -76,8 +85,9 @@ class SequentialBatchExecutor:
             results[entry.unique_id] = result
             if progress is not None:
                 progress(entry.unique_id, result, completed, total)
-        self._latest_results[round_spec.stage_name] = saved_results
-        self._latest_cache_keys[round_spec.stage_name] = saved_cache_keys
+        self._pending_runs.setdefault(id(round_spec), deque()).append(
+            (round_spec, saved_results, saved_cache_keys),
+        )
         return results
 
     def record_validation(
@@ -85,8 +95,12 @@ class SequentialBatchExecutor:
         round_spec: RoundSpec,
         validated_results: Mapping[str, bool],
     ) -> None:
-        saved_results = self._latest_results.get(round_spec.stage_name, {})
-        cache_keys = self._latest_cache_keys.get(round_spec.stage_name, {})
+        pending = self._pending_runs.get(id(round_spec))
+        if not pending:
+            return
+        _retained_spec, saved_results, cache_keys = pending.popleft()
+        if not pending:
+            del self._pending_runs[id(round_spec)]
         for unique_id, decision_valid in validated_results.items():
             result = saved_results.get(unique_id)
             if result is not None:
