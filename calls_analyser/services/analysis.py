@@ -126,6 +126,15 @@ class AnalysisService:
 
         self._cache.clear()
 
+    def persist_cached_result(
+        self,
+        cache_key: CacheKey,
+        result: AnalysisResult,
+    ) -> None:
+        """Write an updated cached result through the configured cache adapter."""
+
+        self._cache[cache_key] = result
+
     def _record_usage(
         self,
         *,

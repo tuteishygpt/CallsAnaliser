@@ -36,7 +36,7 @@ class EntryCallLog(StubCallLogService):
         return handle
 
 
-def make_executor():  # noqa: ANN201
+def make_executor(*, cache=None):  # noqa: ANN001, ANN201
     registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
     ai = QueueAI()
     registry.register("model", ai)
@@ -47,9 +47,19 @@ def make_executor():  # noqa: ANN201
             "prompt": PromptTemplate(key="prompt", title="p", body="body"),
             "simple": PromptTemplate(key="simple", title="s", body="fallback"),
         }),
-        cache={}, usage_tracker=usage,
+        cache={} if cache is None else cache, usage_tracker=usage,
     )
     return SequentialBatchExecutor(service), ai, usage
+
+
+class RecordingCache(dict):
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes = []
+
+    def __setitem__(self, key, value) -> None:  # noqa: ANN001
+        self.writes.append((key, value.metadata.copy()))
+        super().__setitem__(key, value)
 
 
 def spec(*, stage="primary", mode="ui_mass"):  # noqa: ANN201
@@ -105,6 +115,21 @@ def test_sequential_executor_records_stage_modes_and_validation_acknowledgement(
         "decision_valid": True,
     }
     assert executor._latest_results["verification"]["b"].metadata["decision_valid"] is False  # noqa: SLF001
+
+
+def test_validation_acknowledgement_upserts_metadata_to_durable_cache() -> None:
+    cache = RecordingCache()
+    executor, _ai, _usage = make_executor(cache=cache)
+    tenant = TenantConfig(tenant_id="one", vochi_base_url="https://api")
+    round_spec = spec()
+
+    executor.execute([CallLogEntry(unique_id="a")], tenant, round_spec)
+    assert len(cache.writes) == 1
+
+    executor.record_validation(round_spec, {"a": True})
+
+    assert len(cache.writes) == 2
+    assert cache.writes[-1][1]["decision_valid"] is True
 
 
 def test_sequential_executor_isolates_same_identity_between_tenants() -> None:

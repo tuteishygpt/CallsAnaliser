@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 from calls_analyser.domain.models import AnalysisResult, CallLogEntry, Language
-from calls_analyser.services.analysis import AnalysisOptions, AnalysisService
+from calls_analyser.services.analysis import AnalysisOptions, AnalysisService, CacheKey
 from calls_analyser.services.batch_orchestrator import (
     ExecutorProgress,
     RoundExecutionResult,
@@ -19,6 +19,7 @@ class SequentialBatchExecutor:
     def __init__(self, analysis_service: AnalysisService) -> None:
         self._analysis_service = analysis_service
         self._latest_results: dict[str, dict[str, AnalysisResult]] = {}
+        self._latest_cache_keys: dict[str, dict[str, CacheKey]] = {}
 
     def execute(
         self,
@@ -31,6 +32,7 @@ class SequentialBatchExecutor:
     ) -> dict[str, RoundExecutionResult]:
         results: dict[str, RoundExecutionResult] = {}
         saved_results: dict[str, AnalysisResult] = {}
+        saved_cache_keys: dict[str, CacheKey] = {}
         total = len(entries)
         language = Language(round_spec.language)
         for completed, entry in enumerate(entries, start=1):
@@ -53,6 +55,7 @@ class SequentialBatchExecutor:
                     )
                 )
                 saved_results[entry.unique_id] = analysis
+                saved_cache_keys[entry.unique_id] = cache_key
                 result = RoundExecutionResult(
                     raw_text=analysis.text,
                     provider=analysis.provider,
@@ -74,6 +77,7 @@ class SequentialBatchExecutor:
             if progress is not None:
                 progress(entry.unique_id, result, completed, total)
         self._latest_results[round_spec.stage_name] = saved_results
+        self._latest_cache_keys[round_spec.stage_name] = saved_cache_keys
         return results
 
     def record_validation(
@@ -82,9 +86,13 @@ class SequentialBatchExecutor:
         validated_results: Mapping[str, bool],
     ) -> None:
         saved_results = self._latest_results.get(round_spec.stage_name, {})
+        cache_keys = self._latest_cache_keys.get(round_spec.stage_name, {})
         for unique_id, decision_valid in validated_results.items():
             result = saved_results.get(unique_id)
             if result is not None:
                 result.metadata["batch_stage"] = round_spec.stage_name
                 result.metadata["batch_execution"] = "ui_sequential"
                 result.metadata["decision_valid"] = decision_valid
+                self._analysis_service.persist_cached_result(
+                    cache_keys[unique_id], result,
+                )
