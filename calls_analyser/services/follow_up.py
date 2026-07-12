@@ -32,7 +32,7 @@ class FollowUpDecisionParser:
                 text_clean,
                 parse_constant=cls._reject_nonstandard_json_constant,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             return None
 
         if not isinstance(payload, dict):

@@ -94,6 +94,19 @@ def test_parsers_reject_nonstandard_json_constants(parse, constant: str) -> None
 
 
 @pytest.mark.parametrize(
+    "parse",
+    [
+        FollowUpDecisionParser.parse_strict,
+        FollowUpDecisionParser.parse_compatibility,
+    ],
+)
+def test_parsers_reject_deeply_nested_malformed_json(parse) -> None:  # noqa: ANN001
+    text = ("[" * 10_000) + "0" + ("]" * 10_000)
+
+    assert parse(text) is None
+
+
+@pytest.mark.parametrize(
     ("text", "expected"),
     [
         (
@@ -117,6 +130,16 @@ def test_batch_result_parser_keeps_its_tuple_contract() -> None:
     assert parse_follow_up_fields(
         "Needs follow-up: Yes\nSummary: Call the customer"
     ) == ("Yes", "Call the customer")
+
+
+def test_batch_result_parser_delegates_fenced_strict_json() -> None:
+    text = (
+        "```json\n"
+        '{"needs_follow_up": false, "reason": "Issue resolved"}\n'
+        "```"
+    )
+
+    assert parse_follow_up_fields(text) == ("No", "Issue resolved")
 
 
 def test_batch_result_parser_preserves_invalid_raw_text_as_reason() -> None:
