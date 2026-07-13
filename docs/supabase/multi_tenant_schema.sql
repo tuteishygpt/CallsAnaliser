@@ -36,6 +36,9 @@ create table if not exists public.tenant_secrets (
     primary key (tenant_id, key)
 );
 
+comment on column public.tenant_secrets.encrypted_value is
+    'AES-256-GCM envelope enc:v1:<unpadded nonce base64url>:<unpadded ciphertext+tag base64url>; tenant_id and key are AAD.';
+
 create table if not exists public.tenant_settings (
     tenant_id text not null references public.tenants(id) on delete cascade,
     key text not null,

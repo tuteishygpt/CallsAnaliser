@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 from typing import Any
 
 from calls_analyser.adapters.storage.supabase_tenant import (
@@ -10,6 +11,8 @@ from calls_analyser.adapters.storage.supabase_tenant import (
 )
 from calls_analyser.services.auth import AuthService
 from calls_analyser.services.prompt import PromptService, PromptTemplate
+from calls_analyser.services.tenant_admin_settings import TenantAdminSettingsService
+from calls_analyser.services.tenant_secret_codec import TenantSecretCodec
 
 
 @dataclass
@@ -64,6 +67,52 @@ class _FakeTable:
 
     def select(self, *args: Any, **kwargs: Any) -> _FakeQuery:
         return _FakeQuery(self._rows).select(*args, **kwargs)
+
+    def update(self, values: dict[str, Any]) -> "_FakeMutation":
+        return _FakeMutation(self._rows, "update", values)
+
+    def upsert(self, values: dict[str, Any], **_kwargs: Any) -> "_FakeMutation":
+        return _FakeMutation(self._rows, "upsert", values)
+
+    def delete(self) -> "_FakeMutation":
+        return _FakeMutation(self._rows, "delete", {})
+
+
+class _FakeMutation:
+    def __init__(self, rows, operation, values) -> None:
+        self._rows = rows
+        self._operation = operation
+        self._values = values
+        self._filters: list[tuple[str, Any]] = []
+
+    def eq(self, column: str, value: Any) -> "_FakeMutation":
+        self._filters.append((column, value))
+        return self
+
+    def execute(self) -> _Response:
+        matching = [
+            row for row in self._rows
+            if all(row.get(column) == value for column, value in self._filters)
+        ]
+        if self._operation == "delete":
+            self._rows[:] = [row for row in self._rows if row not in matching]
+        elif self._operation == "update":
+            for row in matching:
+                row.update(self._values)
+        elif self._operation == "upsert":
+            key = (self._values.get("tenant_id"), self._values.get("key"))
+            row = next(
+                (
+                    item for item in self._rows
+                    if (item.get("tenant_id"), item.get("key")) == key
+                ),
+                None,
+            )
+            if row is None:
+                self._rows.append(dict(self._values))
+            else:
+                row.update(self._values)
+        return _Response([])
 
 
 class _FakeClient:
@@ -198,3 +247,81 @@ def test_prompt_service_resolves_latest_active_supabase_tenant_prompt_before_glo
     )
     assert service.get_prompt("missing", tenant_id="tenant-a").title == "Tenant Simple v2"
     assert service.list_templates("tenant-a")["detailed"].version == 3
+
+
+def test_supabase_shared_repository_uses_focused_encrypted_writes() -> None:
+    key = base64.urlsafe_b64encode(b"z" * 32).decode().rstrip("=")
+    codec = TenantSecretCodec(key)
+    encrypted = codec.encrypt("tenant-a", "VOCHI_API_KEY", "plain-secret")
+    tables = {
+        "tenants": [{"id": "tenant-a", "display_name": "A", "status": "active"}],
+        "tenant_settings": [
+            {"tenant_id": "tenant-a", "key": "batch_size", "value": 20},
+            {"tenant_id": "tenant-a", "key": "arbitrary", "value": {"keep": True}},
+        ],
+        "tenant_secrets": [
+            {"tenant_id": "tenant-a", "key": "VOCHI_API_KEY", "encrypted_value": encrypted},
+            {"tenant_id": "tenant-a", "key": "EXTRA", "encrypted_value": "legacy-extra"},
+        ],
+        "tenant_prompt_templates": [],
+    }
+    client = _FakeClient(
+        tables
+    )
+    repository = SupabaseTenantSettingsRepository(client=client, codec=codec)
+
+    raw = repository.read_raw_document("tenant-a")
+    assert raw["secrets"] == {
+        "VOCHI_API_KEY": "plain-secret",
+        "EXTRA": "legacy-extra",
+    }
+
+    repository.update_tenant_profile("tenant-a", "Updated", "inactive")
+    repository.upsert_setting("tenant-a", "batch_size", 25)
+    repository.delete_setting("tenant-a", "missing")
+    repository.upsert_secret("tenant-a", "VOCHI_API_KEY", "new-secret")
+    repository.delete_secret("tenant-a", "missing")
+
+    stored = next(
+        row["encrypted_value"]
+        for row in tables["tenant_secrets"]
+        if row["key"] == "VOCHI_API_KEY"
+    )
+    assert stored.startswith("enc:v1:")
+    assert "new-secret" not in stored
+    assert tables["tenants"][0]["display_name"] == "Updated"
+    assert tables["tenants"][0]["status"] == "inactive"
+    assert next(row["value"] for row in tables["tenant_settings"] if row["key"] == "batch_size") == 25
+    assert any(row["key"] == "arbitrary" for row in tables["tenant_settings"])
+    assert any(row["key"] == "EXTRA" for row in tables["tenant_secrets"])
+
+
+def test_supabase_admin_load_hides_encrypted_secret_when_master_key_is_missing() -> None:
+    codec = TenantSecretCodec(base64.urlsafe_b64encode(b"z" * 32).decode().rstrip("="))
+    encrypted = codec.encrypt("tenant-a", "VOCHI_API_KEY", "hidden-value")
+    repository = SupabaseTenantSettingsRepository(
+        client=_FakeClient(
+            {
+                "tenants": [{"id": "tenant-a", "display_name": "A", "status": "active"}],
+                "tenant_settings": [
+                    {"tenant_id": "tenant-a", "key": "telephony_provider", "value": "vochi"},
+                    {"tenant_id": "tenant-a", "key": "vochi_base_url", "value": "https://vochi.test"},
+                ],
+                "tenant_secrets": [
+                    {
+                        "tenant_id": "tenant-a",
+                        "key": "VOCHI_API_KEY",
+                        "encrypted_value": encrypted,
+                    }
+                ],
+                "tenant_prompt_templates": [],
+            }
+        ),
+        codec=TenantSecretCodec(None),
+    )
+
+    document = TenantAdminSettingsService(repository).load("tenant-a")
+
+    assert document["vochi_api_key"] == ""
+    assert "hidden-value" not in repr(document)
+    assert encrypted not in repr(document)

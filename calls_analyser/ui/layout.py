@@ -194,6 +194,107 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 analyze_btn = gr.Button("🧠 Analyze", variant="primary")
                 analysis_md = gr.Markdown()
 
+            with gr.Tab("Tenant Settings", visible=False) as tenant_admin_tab:
+                with gr.Row():
+                    tenant_admin_dd = gr.Dropdown(
+                        choices=[], value=None, label="Administered tenant",
+                        allow_custom_value=False, scale=1,
+                    )
+                    tenant_admin_reload_btn = gr.Button("Reload", scale=0, interactive=False)
+                    tenant_admin_save_btn = gr.Button(
+                        "Save", variant="primary", scale=0, interactive=False
+                    )
+                tenant_admin_status = gr.Markdown()
+                with gr.Group():
+                    gr.Markdown("### General")
+                    tenant_admin_id = gr.Textbox(label="Tenant ID", interactive=False)
+                    tenant_admin_name = gr.Textbox(label="Display name", interactive=False)
+                    tenant_admin_status_dd = gr.Dropdown(
+                        choices=["active", "inactive"], value=None, label="Status",
+                        interactive=False,
+                    )
+                with gr.Group():
+                    gr.Markdown("### Telephony")
+                    tenant_admin_provider = gr.Dropdown(
+                        choices=["vochi", "mts_vats"], value=None, label="Provider",
+                        interactive=False,
+                    )
+                    tenant_admin_vochi_url = gr.Textbox(label="VoChi base URL", interactive=False)
+                    tenant_admin_vochi_key = gr.Textbox(
+                        label="VoChi API key", type="password", interactive=False
+                    )
+                    tenant_admin_mts_domain = gr.Textbox(
+                        label="MTS domain", type="password", interactive=False
+                    )
+                    tenant_admin_mts_key = gr.Textbox(
+                        label="MTS API key", type="password", interactive=False
+                    )
+                with gr.Group():
+                    gr.Markdown("### AI defaults")
+                    tenant_admin_default_language = gr.Textbox(
+                        label="Default language", interactive=False
+                    )
+                    tenant_admin_default_model = gr.Textbox(
+                        label="Default model key", interactive=False
+                    )
+                    tenant_admin_batch_language = gr.Textbox(
+                        label="Batch language", interactive=False
+                    )
+                    tenant_admin_batch_model = gr.Textbox(
+                        label="Batch model key", interactive=False
+                    )
+                with gr.Group():
+                    gr.Markdown("### Batch processing")
+                    tenant_admin_batch_enabled = gr.Dropdown(
+                        choices=[("Enabled", True), ("Disabled", False)],
+                        label="Batch enabled", value=None, interactive=False,
+                    )
+                    tenant_admin_batch_size = gr.Number(
+                        label="Batch size", value=None, precision=0, interactive=False
+                    )
+                    tenant_admin_custom_batch = gr.Dropdown(
+                        choices=[("Enabled", True), ("Disabled", False)],
+                        label="Custom batch enabled", value=None, interactive=False,
+                    )
+                with gr.Group():
+                    gr.Markdown("### Scheduler")
+                    tenant_admin_scheduler_enabled = gr.Dropdown(
+                        choices=[("Enabled", True), ("Disabled", False)],
+                        label="Scheduler enabled", value=None, interactive=False,
+                    )
+                    tenant_admin_scheduler_mode = gr.Dropdown(
+                        choices=["cron", "interval"], value=None, label="Mode",
+                        interactive=False,
+                    )
+                    tenant_admin_cron_time = gr.Textbox(label="Cron time", interactive=False)
+                    tenant_admin_interval = gr.Number(
+                        label="Interval minutes", value=None, precision=0, interactive=False
+                    )
+                    tenant_admin_time_from = gr.Textbox(label="Call time from", interactive=False)
+                    tenant_admin_time_to = gr.Textbox(label="Call time to", interactive=False)
+                    tenant_admin_call_type = gr.Textbox(
+                        label="Call type filter", interactive=False
+                    )
+                with gr.Group():
+                    gr.Markdown("### Email")
+                    tenant_admin_email_to = gr.Textbox(label="Recipient", interactive=False)
+                    tenant_admin_email_from = gr.Textbox(
+                        label="Sender address", interactive=False
+                    )
+                    tenant_admin_email_name = gr.Textbox(label="Sender name", interactive=False)
+                with gr.Group():
+                    gr.Markdown("### Prompt templates")
+                    tenant_admin_prompts = gr.DataFrame(
+                        headers=["Key", "Title", "Body", "Version"],
+                        datatype=["str", "str", "str", "number"],
+                        value=[],
+                        row_count=0,
+                        row_limits=(0, 0),
+                        column_count=4,
+                        column_limits=(4, 4),
+                        interactive=False,
+                    )
+
             with gr.Tab("Reports", visible=not auth_mode) as reports_tab:
                 with gr.Row():
                     tenant_report_tb = gr.Textbox(
@@ -269,7 +370,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         tenant_selector = tenant_dd if auth_mode else tenant_tb
         tenant_report_selector = tenant_report_dd if auth_mode else tenant_report_tb
 
-        pwd_btn.click(
+        login_event = pwd_btn.click(
             handlers.check_password,
             inputs=[login_tb, pwd_tb],
             outputs=[
@@ -281,6 +382,69 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 tenant_report_dd,
                 reports_tab,
             ],
+        )
+        tenant_admin_outputs = [
+            tenant_admin_id, tenant_admin_name, tenant_admin_status_dd, tenant_admin_provider,
+            tenant_admin_vochi_url, tenant_admin_vochi_key, tenant_admin_mts_domain,
+            tenant_admin_mts_key, tenant_admin_default_language, tenant_admin_default_model,
+            tenant_admin_batch_language, tenant_admin_batch_model, tenant_admin_batch_enabled,
+            tenant_admin_batch_size, tenant_admin_custom_batch, tenant_admin_scheduler_enabled,
+            tenant_admin_scheduler_mode, tenant_admin_cron_time, tenant_admin_interval,
+            tenant_admin_time_from, tenant_admin_time_to, tenant_admin_call_type,
+            tenant_admin_email_to, tenant_admin_email_from, tenant_admin_email_name,
+            tenant_admin_prompts, tenant_admin_status,
+            tenant_admin_reload_btn, tenant_admin_save_btn,
+        ]
+        tenant_admin_inputs = [
+            tenant_admin_name, tenant_admin_status_dd, tenant_admin_provider,
+            tenant_admin_vochi_url, tenant_admin_vochi_key, tenant_admin_mts_domain,
+            tenant_admin_mts_key, tenant_admin_default_language, tenant_admin_default_model,
+            tenant_admin_batch_language, tenant_admin_batch_model, tenant_admin_batch_enabled,
+            tenant_admin_batch_size, tenant_admin_custom_batch, tenant_admin_scheduler_enabled,
+            tenant_admin_scheduler_mode, tenant_admin_cron_time, tenant_admin_interval,
+            tenant_admin_time_from, tenant_admin_time_to, tenant_admin_call_type,
+            tenant_admin_email_to, tenant_admin_email_from, tenant_admin_email_name,
+        ]
+        login_event.then(
+            handlers.refresh_admin_tenants,
+            inputs=[auth_session],
+            outputs=[tenant_admin_dd, tenant_admin_tab],
+        ).then(
+            handlers.load_tenant_admin_form,
+            inputs=[tenant_admin_dd, auth_session],
+            outputs=tenant_admin_outputs,
+        )
+        tenant_admin_change_event = tenant_admin_dd.input(
+            handlers.refresh_admin_tenants,
+            inputs=[auth_session, tenant_admin_dd],
+            outputs=[tenant_admin_dd, tenant_admin_tab],
+        )
+        tenant_admin_change_event.then(
+            handlers.load_tenant_admin_form,
+            inputs=[tenant_admin_dd, auth_session],
+            outputs=tenant_admin_outputs,
+        )
+
+        tenant_admin_reload_event = tenant_admin_reload_btn.click(
+            handlers.refresh_admin_tenants,
+            inputs=[auth_session, tenant_admin_dd],
+            outputs=[tenant_admin_dd, tenant_admin_tab],
+        )
+        tenant_admin_reload_event.then(
+            handlers.load_tenant_admin_form,
+            inputs=[tenant_admin_dd, auth_session],
+            outputs=tenant_admin_outputs,
+        )
+
+        tenant_admin_save_event = tenant_admin_save_btn.click(
+            handlers.save_tenant_admin_form,
+            inputs=[tenant_admin_dd, *tenant_admin_inputs, auth_session],
+            outputs=tenant_admin_outputs,
+        )
+        tenant_admin_save_event.then(
+            handlers.refresh_admin_tenants,
+            inputs=[auth_session, tenant_admin_dd],
+            outputs=[tenant_admin_dd, tenant_admin_tab],
         )
 
         filter_btn.click(

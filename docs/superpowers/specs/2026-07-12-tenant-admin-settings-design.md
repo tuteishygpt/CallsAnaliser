@@ -1,63 +1,68 @@
-# Tenant Admin Settings Design
+# Tenant Admin Settings — Simplified MVP Design
 
-## Goal and boundaries
+## Goal
 
-Add a Gradio `Tenant Settings` tab for authenticated users with the `admin` role.
-An administrator selects a tenant and can view or edit all tenant configuration,
-including plaintext secret values, grouped into semantic sections.
+Add a Gradio `Tenant Settings` tab where an authenticated user with the current
+`admin` role can view and edit the most important configuration of an existing
+tenant.
 
-The feature manages `tenants`, `tenant_settings`, `tenant_secrets`, and
-`tenant_prompt_templates`. It does not manage users, passwords, or role
-assignments. The tenant ID, database IDs, versions, and timestamps are system
-identity/audit fields rather than configuration and are read-only. The user
-explicitly approved keeping Tenant ID read-only on 2026-07-12. Renaming a tenant
-is a separate data-migration operation because it is referenced throughout the
-database; display name and status remain editable here.
+The MVP manages:
+
+- tenant display name and active/inactive status;
+- known telephony settings and secrets;
+- known AI, batch, scheduler, and email settings;
+- read-only active prompt templates.
+
+It does not manage users, passwords, roles, tenant IDs, arbitrary key/value
+records, or prompt history. Tenant creation and tenant renaming remain separate
+operations.
+
+The purpose of this reduced scope is to provide a useful administration screen
+without introducing a large transactional RPC, prompt-version workflow, or
+schema migration before those capabilities are actually needed.
 
 ## User experience
 
 `Tenant Settings` is a top-level tab next to `Calls`, `AI Analysis`, and
-`Reports`. It is hidden before login and when the live authorization source says
-the user administers no tenant. The selector contains every tenant for which the
-current active user currently has role `admin`, including inactive tenants. This
-separate admin list allows an administrator to reactivate a tenant. Calls and
-Reports continue to list only active tenants.
+`Reports`. It is hidden before login and hidden when the current user
+administers no tenant.
 
-If there is one eligible tenant it is selected and loaded automatically. Changing
-the selection replaces the form and discards unsaved values. `Reload` does the
-same. `Save` validates the whole document, writes it atomically, reads it back,
-and reports success without echoing secret values.
+The tenant selector is populated from the live authorization source and includes
+inactive tenants so an administrator can reactivate them. Calls and Reports
+continue to show only active tenants.
 
-The sections are:
+If exactly one tenant is available, it is selected and loaded automatically.
+Changing the selection or clicking `Reload` replaces the form and discards
+unsaved values.
 
-1. **General**: read-only tenant ID, editable display name and active/inactive
-   status.
+`Save` validates the form, writes the changed values, reloads the persisted
+document, and displays a generic success or failure message. Status messages
+never contain secret values.
+
+The form contains these sections:
+
+1. **General**: read-only tenant ID, editable display name and status.
 2. **Telephony**: provider, VoChi base URL/API key, MTS domain/API key. Both
-   provider configurations stay visible so a switch can be prepared in one save.
+   provider configurations remain visible.
 3. **AI defaults**: default language/model and batch language/model.
 4. **Batch processing**: enabled, batch size, and custom batch enabled.
 5. **Scheduler**: enabled, cron/interval mode, cron time, interval, and call/time
    filters.
 6. **Email**: recipient, sender address, and sender name.
-7. **Prompt templates**: an active-template editor and read-only version history.
-8. **Additional settings** and **Additional secrets**: key/value tables for every
-   persisted key not represented by a typed field, including installation-specific
-   email credentials. Rows can be added, changed, or deleted.
+7. **Prompt templates**: read-only list of active tenant templates. Prompt
+   editing and version history are deferred.
 
-Secret values are intentionally decrypted and returned to the browser as ordinary
-plaintext controls. They never appear in logs, exceptions, status messages, or
-test snapshots.
+An empty tenant selection keeps the form disabled.
 
-## Canonical field map and round-trip rules
+## Canonical fields
 
-The admin form reads raw tenant records, not resolved global/environment
-fallbacks. A missing tenant override is displayed as empty, optionally alongside
-a non-editable effective-value hint for non-secret fields. This prevents a simple
-load/save from materializing global defaults as tenant overrides.
+The form reads raw tenant records, not resolved environment or global fallbacks.
+A missing tenant override appears empty. This prevents a load/save cycle from
+copying global defaults into tenant-specific records.
 
-| Section field | Table | Canonical key/type |
+| Form field | Storage | Canonical key/type |
 | --- | --- | --- |
-| Display name, status | `tenants` | columns `display_name`, `status` |
+| Display name, status | `tenants` | `display_name`, `status` |
 | Provider | `tenant_settings` | `telephony_provider`: string |
 | VoChi base URL | `tenant_settings` | `vochi_base_url`: string |
 | VoChi API key | `tenant_secrets` | `VOCHI_API_KEY`: secret string |
@@ -67,138 +72,149 @@ load/save from materializing global defaults as tenant overrides.
 | Batch language/model | `tenant_settings` | `batch_language_code`, `batch_model_key`: strings |
 | Batch controls | `tenant_settings` | `batch_enabled`: boolean, `batch_size`: integer, `custom_batch_enabled`: boolean |
 | Scheduler controls | `tenant_settings` | `scheduler_enabled`: boolean, `scheduler_mode`: string, `scheduler_cron_time`: string, `scheduler_interval_minutes`: integer |
-| Scheduler filters | `tenant_settings` | `scheduler_filters`: JSON object with `time_from`, `time_to`, `call_type` |
+| Scheduler filters | `tenant_settings` | `scheduler_filters`: JSON object |
 | Email fields | `tenant_settings` | `email_to`, `email_from`, `email_from_name`: strings |
 
-Known legacy aliases (`TELEPHONY_PROVIDER`, `VOCHI_BASE_URL`, setting-table
-`MTS_DOMAIN`, and setting-table API keys) are normalized to the canonical owner
-on save and removed in the same transaction. They are excluded from additional
-rows so they never appear twice. Runtime readers retain legacy-read compatibility.
+Known legacy aliases remain readable at runtime. When the corresponding typed
+field is saved, the canonical key is written and that field’s known legacy alias
+is removed. A separate bulk cleanup of all legacy records is out of scope.
 
-An empty optional typed string deletes its tenant record, restoring fallback
-behavior. Boolean and numeric controls always persist explicit values. Clearing
-all scheduler filter inputs deletes `scheduler_filters`; partial filters persist
-only non-empty members. Removing an additional row deletes it. Additional setting
-values must be valid JSON; additional secret values are strings, and an explicit
-delete action—not an empty value—removes an arbitrary secret.
-
-## Prompt semantics
-
-The editor selects an existing prompt family by its immutable key or creates a
-new key. Version and audit metadata are read-only and generated by the database.
-Saving changed title/body for an active family atomically creates version
-`max(version)+1`, deactivates the previous active version, and activates the new
-one. Turning a family inactive deactivates its current version without deleting
-history. Reactivating a family creates a new version copied from the selected
-historical content. Deleting prompt history is out of scope. At most one active
-version may exist for each `(tenant_id, key)`.
+Empty optional strings delete their tenant override and restore fallback
+behavior. Boolean and numeric controls persist explicit values. If every
+scheduler filter is empty, `scheduler_filters` is deleted; otherwise only
+non-empty members are stored.
 
 ## Architecture
 
-### Shared repository composition
+### Shared repository
 
-Create one write-capable tenant repository instance in `build_dependencies()`
-and inject it into `TenantAdminSettingsService`, `TenantSettingsService`,
-`TenantService`, and the tenant prompt repository used by `PromptService`. The
-local/in-memory composition likewise shares one store. Consequently settings,
-secrets, and prompts saved in the admin tab are visible to runtime resolution on
-the next call without process restart or cache invalidation.
+Create one tenant configuration repository instance in `build_dependencies()`.
+Inject it into:
 
-The repository interface supports raw document reads plus transactional saves.
-The Supabase implementation calls a new SQL RPC; the in-memory implementation
-applies a validated copy under a lock and swaps it only on success.
+- `TenantAdminSettingsService` for raw admin reads and writes;
+- `TenantSettingsService` for runtime settings;
+- `TenantService` for telephony configuration;
+- the prompt repository used by `PromptService` for read-only prompt display.
+
+The Supabase composition and the local/in-memory composition each share one
+instance. A successful save is therefore visible to runtime services on the next
+read without restarting the process or invalidating a cache.
+
+The repository exposes focused operations rather than one full-document RPC:
+
+- read tenant profile, settings, secrets, and active prompts;
+- update tenant profile;
+- upsert or delete individual settings;
+- upsert or delete individual secrets.
+
+The in-memory implementation applies the same operations under a lock.
 
 ### Live authorization
 
-Extend the auth repository/service with:
+Extend the auth service with:
 
 - `list_admin_tenants(user_id, include_inactive=True)`;
 - `can_administer_tenant(user_id, tenant_id)`.
 
-Both query the current data source, require an active user, require the current
-access row role (case-insensitive) to be `admin`, and include inactive tenants for
-admin management. Session `allowed_tenants` data controls presentation only. On
-every selector refresh, load, reload, save, and prompt action, `UIHandlers` calls
-the live method before touching the admin repository. Demotion, access removal,
-user deactivation, or a forged tenant ID therefore takes effect immediately.
+Both methods query the current repository state, require an active user, and
+require a current access row whose role equals `admin` case-insensitively.
+
+Session `allowed_tenants` is presentation data only. Selector refresh, load,
+reload, and save each perform a live authorization check before calling the
+admin repository. Demotion, access removal, user deactivation, and forged tenant
+IDs therefore take effect immediately.
 
 ### Admin service
 
-`TenantAdminSettingsService` owns the canonical field catalog, conversion between
-records and an editable document, validation, alias normalization, encryption
-boundary, and persistence orchestration. It does not decide authorization.
+`TenantAdminSettingsService` owns:
+
+- the canonical typed-field catalog;
+- conversion between raw records and the editable document;
+- validation;
+- blank-value deletion rules;
+- field-level legacy alias normalization;
+- persistence orchestration.
+
+It does not decide authorization and does not edit prompt templates.
 
 ### UI wiring
 
-`build_demo()` adds the tab and form. Login/selector refresh calls the live admin
-tenant list and updates tab visibility/choices. Dropdown change and `Reload` call
-the load handler. `Save` calls the save handler and then uses the returned
-persisted document to repopulate controls. Existing Calls and Reports behavior is
-unchanged.
+`build_demo()` adds the tab and typed form. Login and selector refresh load the
+live admin tenant list. Selector change and `Reload` call the load handler.
+`Save` calls the save handler and repopulates the controls from the persisted
+readback.
+
+Existing Calls and Reports selectors are unchanged.
 
 ## Secrets at rest
 
-Introduce a secrets codec owned by the repository boundary. New and updated
-secrets are encrypted with AES-256-GCM. `TENANT_SECRETS_MASTER_KEY` is an
-unpadded base64url encoding of exactly 32 random bytes; every other encoding or
-decoded size is rejected. A stored value has the exact form
-`enc:v1:<nonce_b64url>:<ciphertext_and_tag_b64url>`, where both binary fields use
-unpadded base64url, the nonce is 12 random bytes, and the final field is the
-AES-GCM ciphertext with its 16-byte tag. Encryption/decryption uses the UTF-8
-bytes of `tenant_id + "\\0" + key` as additional authenticated data, preventing
-a ciphertext from being moved to another tenant or key. The database and
-transactional RPC see only the encrypted envelope. The admin service receives
-plaintext after repository decryption.
+New and changed tenant secrets are encrypted at the repository boundary with
+AES-256-GCM.
 
-Only rows that do not start with `enc:` are treated as legacy plaintext so current
-deployments remain readable. Malformed `enc:v1:` values and every unsupported
-`enc:*` version fail closed with a generic error; they are never returned or
-treated as legacy plaintext. Any legacy value included in a successful save is
-rewritten encrypted. If the master key is missing or invalid, legacy plaintext
-may still be read for compatibility, but encrypted values cannot be read and no
-secret write is allowed; the UI reports a generic configuration error without
-returning ciphertext or plaintext. Key rotation is a separate operational task.
+`TENANT_SECRETS_MASTER_KEY` is an unpadded base64url encoding of exactly 32
+random bytes. A stored encrypted value has this form:
 
-The schema keeps `encrypted_value` and gains a comment documenting the envelope.
+```text
+enc:v1:<nonce_b64url>:<ciphertext_and_tag_b64url>
+```
 
-## Atomic persistence and database invariants
+The nonce is 12 random bytes. Encryption uses the UTF-8 bytes of
+`tenant_id + "\0" + key` as additional authenticated data so ciphertext cannot
+be moved to another tenant or key.
 
-Add a Supabase migration with one service-role-only RPC that accepts a validated
-tenant document containing profile changes, setting/secret upserts and deletes,
-and prompt operations. The RPC:
+Values that do not start with `enc:` are treated as legacy plaintext and remain
+readable. A legacy value is rewritten encrypted only when that secret is saved.
+Malformed or unsupported `enc:*` values fail closed with a generic error.
 
-- executes the complete save in one database transaction;
-- locks the tenant and affected prompt families;
-- applies canonical upserts/deletes and legacy-alias cleanup;
-- derives each new prompt version as `max(version)+1` while locked;
-- deactivates the former version and inserts the new version atomically;
-- records the already-authorized user's UUID in `created_by` for audit only;
-- rolls back every change on any failure.
+If the master key is missing or invalid:
 
-Before adding the partial unique index, the migration deterministically reconciles
-existing duplicates: for each `(tenant_id, key)`, it keeps active the row with the
-highest version, breaking ties by newest `updated_at`, then newest `created_at`,
-then greatest UUID; all other active rows are set inactive in the same migration
-transaction. The migration emits a count of reconciled rows for deployment audit
-and aborts if the post-reconciliation invariant still fails. A partial unique
-index then enforces one active row per `(tenant_id, key)` in
-`tenant_prompt_templates`. No prompt history is deleted. The RPC is not an
-authorization boundary—the server uses its service role—so the handler's live
-check remains mandatory.
+- legacy plaintext can still be read for compatibility;
+- encrypted values cannot be read;
+- secret writes are rejected;
+- non-secret settings may still be saved;
+- UI errors remain generic and never include stored or submitted values.
+
+Key rotation is out of scope.
+
+## Persistence and database changes
+
+The MVP uses the existing `tenants`, `tenant_settings`, `tenant_secrets`, and
+`tenant_prompt_templates` tables. No schema migration or new SQL RPC is required.
+
+Save performs a short sequence of repository operations:
+
+1. validate the complete form before any write;
+2. update the tenant profile if changed;
+3. upsert or delete changed settings;
+4. encrypt and upsert or delete changed secrets;
+5. read the document back.
+
+This is intentionally simpler than a cross-table transaction. A database or
+network failure can leave some fields saved while later fields fail. The UI
+reports a generic failure and `Reload` shows the actual persisted state.
+
+This trade-off is accepted for the MVP because tenant administration is expected
+to be infrequent and performed by few administrators. If partial saves become a
+real operational problem, a transactional RPC can be added later without
+changing the UI document format.
+
+Prompt editing, prompt-version locking, duplicate reconciliation, and the
+partial unique active-prompt index are deferred to that later phase.
 
 ## Validation and errors
 
-Validation completes before the RPC call and includes non-empty display name;
-tenant status strictly in `{active, inactive}`; known provider and scheduler
-choices; positive batch size and interval; valid
-`HH:MM` times; unique additional keys with no typed/alias collision; valid JSON
-setting values; and non-empty prompt key/title/body. Conditional telephony
-requirements are checked against the effective post-save configuration.
+Validation completes before the first write and includes:
 
-Validation errors identify section/field and perform no writes. Authorization
-errors are generic and perform no admin-repository call. Persistence and crypto
-errors are generic and never interpolate payloads. An empty tenant selection
-keeps the form disabled.
+- non-empty display name;
+- tenant status in `{active, inactive}`;
+- known provider and scheduler choices;
+- positive batch size and scheduler interval;
+- valid `HH:MM` times;
+- provider-specific required fields based on the effective post-save values.
+
+Validation errors identify the section and field. Authorization failures are
+generic and make no admin-repository call. Persistence and crypto errors are
+generic and never interpolate form values, stored values, or ciphertext.
 
 ## Testing
 
@@ -206,34 +222,46 @@ Implementation follows test-driven development.
 
 - Auth tests cover active admin, inactive tenant, operator, demotion, access
   removal, inactive user, and forged tenant behavior.
-- Codec tests cover encrypted round trips, nonce uniqueness, legacy plaintext
-  reads/migration, missing/wrong keys, and absence of values in errors/logs.
-- Repository/RPC tests cover raw list/upsert/delete behavior, alias cleanup,
-  all-or-nothing rollback, concurrent prompt edits, generated versions, audit
-  user, and the unique-active invariant.
-- Service tests cover typed/raw document assembly, raw-versus-effective display,
-  blank deletion/fallback, arbitrary JSON and secrets, validation, and prompt
-  operations.
-- Handler tests prove every operation performs a live role check and that denied
-  requests make zero admin-repository calls.
-- Wiring tests prove the admin service and runtime resolvers share a store, and
-  saved settings, secrets, and prompts are observed immediately in both Supabase
-  and in-memory compositions.
-- Layout/login tests cover visibility, admin-only choices, inactive tenant
-  reactivation, event signatures, and unchanged Calls/Reports selectors.
-
-The complete existing suite is run for regression coverage.
+- Codec tests cover encrypted round trips, nonce uniqueness, legacy plaintext,
+  missing/wrong keys, malformed envelopes, and value-free errors.
+- Repository tests cover raw reads, typed upserts/deletes, field-level alias
+  cleanup, encryption at rest, and shared in-memory state.
+- Service tests cover raw document assembly, blank deletion, validation,
+  scheduler filter handling, and read-only prompts.
+- Handler tests prove every operation performs a live role check and denied
+  requests make zero admin-service calls.
+- Wiring tests prove admin and runtime services share one repository and observe
+  successful saves immediately.
+- Layout/login tests cover tab visibility, inactive administered tenants,
+  single-tenant auto-selection, event signatures, and unchanged Calls/Reports
+  selectors.
+- The complete existing suite runs for regression coverage.
 
 ## Acceptance criteria
 
-- The tab and selector reflect the current live admin roles and include inactive
-  administered tenants; operators cannot invoke its operations.
-- Selecting a tenant loads every raw known and arbitrary setting, decrypted
-  plaintext secret, and prompt family/history without duplicating aliases.
-- One save atomically persists all profile, setting, secret, and prompt changes;
-  failures leave the prior document unchanged.
-- Blank/delete behavior restores runtime fallbacks as specified.
+- The tab is visible only to a currently active administrator and includes
+  inactive administered tenants.
+- Every load, reload, and save performs a live admin-role check.
+- Selecting a tenant loads its raw known settings, plaintext secret controls,
+  and active prompts without materializing global fallbacks.
+- Saving validates first, persists canonical typed fields, and reloads the
+  actual stored state.
+- Blank typed strings delete tenant overrides as specified.
+- New or changed secrets are never stored as plaintext after a successful secret
+  write.
 - Saved configuration is visible to runtime services without restart.
-- Prompt history is preserved and exactly one active version exists per family.
-- No secret value appears in logs, errors, status messages, or stored plaintext
-  after a successful save.
+- Prompt templates remain read-only in the MVP.
+- No secret value appears in logs, exceptions, status messages, or test
+  snapshots.
+
+## Deferred enhancements
+
+The following require a separate design and are not part of this MVP:
+
+- arbitrary additional settings and secrets;
+- prompt creation, editing, activation, and version history;
+- one-active-prompt database invariant and duplicate reconciliation;
+- one cross-table transactional save RPC;
+- optimistic locking or conflict detection for concurrent administrators;
+- bulk migration of every legacy alias and plaintext secret;
+- tenant creation, ID changes, user management, and role management.

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import base64
 from types import SimpleNamespace
 
+import pytest
+
+from calls_analyser.services.prompt import PromptService, PromptTemplate
+from calls_analyser.services.tenant import TenantService
+from calls_analyser.services.tenant_admin_settings import InMemoryTenantAdminRepository
+from calls_analyser.services.tenant_secret_codec import TenantSecretCodec
 from calls_analyser.ui import dependencies
 
 
@@ -45,9 +52,16 @@ class _FakeSupabaseAuthRepository:
 
 
 class _FakeSupabaseTenantSettingsRepository:
-    def __init__(self, supabase_url: str, supabase_key: str) -> None:
+    def __init__(
+        self,
+        supabase_url: str,
+        supabase_key: str,
+        *,
+        codec: TenantSecretCodec | None = None,
+    ) -> None:
         self.supabase_url = supabase_url
         self.supabase_key = supabase_key
+        self.codec = codec
 
     def get_setting(self, _tenant_id: str, _key: str):
         return None
@@ -71,6 +85,7 @@ def _patch_build_dependencies(
     secrets: dict[str, str] | None = None,
 ) -> None:
     monkeypatch.setattr(dependencies.config, "PROJECT_IMPORTS_AVAILABLE", True)
+    monkeypatch.setattr(dependencies.config, "Language", lambda value: value)
     monkeypatch.setattr(dependencies, "EnvSecretsAdapter", lambda: _FakeSecretsAdapter(secrets))
     monkeypatch.setattr(dependencies, "LocalStorageAdapter", lambda: "storage")
     monkeypatch.setattr(dependencies, "PromptService", _FakePromptService)
@@ -178,11 +193,34 @@ def test_build_dependencies_uses_supabase_repositories_when_configured(monkeypat
         deps.tenant_settings_service._repository,
         _FakeSupabaseTenantSettingsRepository,
     )
-    assert isinstance(deps.prompt_service.prompt_repository, _FakeSupabasePromptTemplateRepository)
+    assert deps.prompt_service.prompt_repository is deps.tenant_settings_service._repository
+    assert deps.tenant_admin_settings_service._repository is deps.tenant_settings_service._repository
+    assert isinstance(deps.tenant_settings_service._repository.codec, TenantSecretCodec)
     assert deps.auth_service._repository.supabase_key == "service-key"
 
 
-def test_build_dependencies_falls_back_when_supabase_repository_wiring_fails(monkeypatch) -> None:
+def test_tenant_repository_builder_passes_codec_through_public_constructor(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dependencies,
+        "SupabaseTenantSettingsRepository",
+        _FakeSupabaseTenantSettingsRepository,
+    )
+    codec = TenantSecretCodec(
+        base64.urlsafe_b64encode(b"k" * 32).decode("ascii").rstrip("=")
+    )
+
+    repository = dependencies._build_tenant_settings_repository(
+        "https://example.supabase.co",
+        "service-key",
+        codec=codec,
+    )
+
+    assert repository.codec is codec
+
+
+def test_build_dependencies_disables_admin_when_supabase_repository_wiring_fails(
+    monkeypatch,
+) -> None:
     class _BrokenRepository:
         def __init__(self, *_args, **_kwargs) -> None:  # noqa: ANN002, ANN003
             raise RuntimeError("supabase unavailable")
@@ -200,12 +238,91 @@ def test_build_dependencies_falls_back_when_supabase_repository_wiring_fails(mon
     monkeypatch.setattr(dependencies, "SupabaseAuthRepository", _BrokenRepository)
     monkeypatch.setattr(dependencies, "SupabaseTenantSettingsRepository", _BrokenRepository)
     monkeypatch.setattr(dependencies, "SupabasePromptTemplateRepository", _BrokenRepository)
+    in_memory_admin_constructions: list[dict[str, object]] = []
+    original_in_memory_repository = InMemoryTenantAdminRepository
+
+    def _track_in_memory_admin(**kwargs):  # noqa: ANN003, ANN202
+        in_memory_admin_constructions.append(kwargs)
+        return original_in_memory_repository(**kwargs)
+
+    monkeypatch.setattr(dependencies, "InMemoryTenantAdminRepository", _track_in_memory_admin)
+    tenant_sources: list[object | None] = []
+    monkeypatch.setattr(
+        dependencies,
+        "_build_tenant_service",
+        lambda _secrets, *, tenant_settings_source=None: tenant_sources.append(
+            tenant_settings_source
+        )
+        or "tenant-service",
+    )
 
     deps = dependencies.build_dependencies()
 
     assert deps.auth_service.authenticate("alice", "correct-password") is not None
     assert deps.tenant_settings_service.resolve("tenant-default").batch_size == 20
     assert deps.prompt_service.prompt_repository is None
+    assert deps.tenant_admin_settings_service is None
+    assert tenant_sources == [None]
+    assert in_memory_admin_constructions == []
+
+
+def test_tenant_settings_builder_preserves_a_falsey_repository(monkeypatch) -> None:
+    class _FalseyRepository:
+        def __bool__(self) -> bool:
+            return False
+
+        def get_setting(self, _tenant_id: str, _key: str):
+            return None
+
+        def get_secret(self, _tenant_id: str, _key: str):
+            return None
+
+        def list_tenant_ids(self) -> list[str]:
+            return []
+
+    repository = _FalseyRepository()
+    monkeypatch.setattr(
+        dependencies,
+        "_build_tenant_settings_repository",
+        lambda *_args, **_kwargs: pytest.fail("repository must not be rebuilt"),
+    )
+
+    service = dependencies._build_tenant_settings_service(
+        SimpleNamespace(),
+        repository=repository,
+    )
+
+    assert service._repository is repository
+
+
+def test_prompt_service_does_not_hide_repository_constructor_type_errors(monkeypatch) -> None:
+    class _PromptServiceWithBrokenRepositoryConstructor:
+        def __init__(self, _prompts, *, prompt_repository=None) -> None:  # noqa: ANN001
+            if prompt_repository is not None:
+                raise TypeError("repository-aware constructor failed")
+
+    monkeypatch.setattr(
+        dependencies,
+        "PromptService",
+        _PromptServiceWithBrokenRepositoryConstructor,
+    )
+
+    with pytest.raises(TypeError, match="repository-aware constructor failed"):
+        dependencies._build_prompt_service(repository=object())
+
+
+def test_build_dependencies_uses_minimal_fallback_when_admin_imports_are_missing(
+    monkeypatch,
+) -> None:
+    _patch_build_dependencies(monkeypatch)
+    monkeypatch.setattr(dependencies, "TenantSecretCodec", None)
+    monkeypatch.setattr(dependencies, "InMemoryTenantAdminRepository", None)
+    monkeypatch.setattr(dependencies, "TenantAdminSettingsService", None)
+
+    deps = dependencies.build_dependencies()
+
+    assert deps.project_imports_available is False
+    assert deps.tenant_admin_settings_service is None
 
 
 def test_build_dependencies_wires_supabase_tenant_source_into_tenant_service(monkeypatch) -> None:
@@ -248,4 +365,74 @@ def test_build_dependencies_wires_supabase_tenant_source_into_tenant_service(mon
     assert isinstance(
         captured["tenant_settings_source"],
         _FakeSupabaseTenantSettingsRepository,
+    )
+
+
+def test_local_admin_save_is_immediately_visible_to_all_runtime_services(monkeypatch) -> None:
+    master_key = base64.urlsafe_b64encode(b"k" * 32).decode("ascii").rstrip("=")
+    repository = InMemoryTenantAdminRepository(
+        tenants={"tenant-default": {"display_name": "Tenant", "status": "active"}},
+        settings={},
+        secrets={},
+        prompts={
+            "tenant-default": [
+                {
+                    "key": "tenant-analysis",
+                    "title": "Tenant analysis",
+                    "body": "Read-only tenant prompt",
+                    "version": 1,
+                    "is_active": True,
+                }
+            ]
+        },
+        codec=TenantSecretCodec(master_key),
+    )
+
+    _patch_build_dependencies(
+        monkeypatch,
+        secrets={"TENANT_SECRETS_MASTER_KEY": master_key},
+    )
+    monkeypatch.setattr(dependencies.config, "DEFAULT_TENANT_ID", "tenant-default")
+    monkeypatch.setattr(dependencies, "PromptService", PromptService)
+    monkeypatch.setattr(dependencies, "InMemoryTenantAdminRepository", lambda **_kwargs: repository)
+    monkeypatch.setattr(
+        dependencies,
+        "_build_tenant_service",
+        lambda secrets_adapter, *, tenant_settings_source=None: TenantService(
+            secrets_adapter,
+            default_tenant="tenant-default",
+            tenant_settings_source=tenant_settings_source,
+        ),
+    )
+
+    deps = dependencies.build_dependencies()
+    document = deps.tenant_admin_settings_service.load("tenant-default")
+    document.update(
+        telephony_provider="vochi",
+        vochi_base_url="https://tenant.example/api/v1",
+        vochi_api_key="tenant-api-key",
+        default_language="be",
+        batch_size=41,
+    )
+
+    deps.tenant_admin_settings_service.save("tenant-default", document, "admin-user")
+
+    assert deps.tenant_admin_settings_service._repository is repository
+    assert deps.tenant_settings_service._repository is repository
+    assert deps.tenant_service._tenant_settings_source is repository
+    assert deps.prompt_service._prompt_repository is repository
+    runtime_settings = deps.tenant_settings_service.resolve("tenant-default")
+    assert runtime_settings.default_language == "be"
+    assert runtime_settings.batch_size == 41
+    telephony = deps.tenant_service.resolve("tenant-default")
+    assert telephony.vochi_base_url == "https://tenant.example/api/v1"
+    assert telephony.vochi_api_key == "tenant-api-key"
+    assert deps.prompt_service.get_prompt(
+        "tenant-analysis",
+        tenant_id="tenant-default",
+    ) == PromptTemplate(
+        key="tenant-analysis",
+        title="Tenant analysis",
+        body="Read-only tenant prompt",
+        version=1,
     )

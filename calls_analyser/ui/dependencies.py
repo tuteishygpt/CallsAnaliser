@@ -65,6 +65,11 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
 
 try:
     from calls_analyser.services.auth import AuthService, InMemoryAuthRepository, hash_password
+    from calls_analyser.services.tenant_admin_settings import (
+        InMemoryTenantAdminRepository,
+        TenantAdminSettingsService,
+    )
+    from calls_analyser.services.tenant_secret_codec import TenantSecretCodec
     from calls_analyser.services.tenant_settings import (
         InMemoryTenantSettingsRepository,
         TenantSettingsService,
@@ -73,6 +78,9 @@ except ImportError:  # pragma: no cover - service modules are part of the projec
     AuthService = None  # type: ignore
     InMemoryAuthRepository = None  # type: ignore
     hash_password = None  # type: ignore
+    InMemoryTenantAdminRepository = None  # type: ignore
+    TenantAdminSettingsService = None  # type: ignore
+    TenantSecretCodec = None  # type: ignore
     InMemoryTenantSettingsRepository = None  # type: ignore
     TenantSettingsService = None  # type: ignore
 
@@ -103,12 +111,24 @@ class AppDependencies:
     batch_params: BatchParams
     auth_service: Any = None
     tenant_settings_service: Any = None
+    tenant_admin_settings_service: Any = None
 
 
 MODEL_PLACEHOLDER_CHOICE = (
     "Configure Vertex AI credentials to enable Gemini models",
     "",
 )
+
+
+def _admin_dependencies_available() -> bool:
+    return all(
+        dependency is not None
+        for dependency in (
+            InMemoryTenantAdminRepository,
+            TenantAdminSettingsService,
+            TenantSecretCodec,
+        )
+    )
 
 
 def _register_gemini_models(registry: ProviderRegistry, secrets_adapter: Any) -> None:
@@ -151,10 +171,16 @@ def _build_model_options(ai_registry: ProviderRegistry) -> List[Tuple[str, str]]
 def _build_tenant_settings_repository(
     supabase_url: str | None = None,
     supabase_key: str | None = None,
+    *,
+    codec: Any | None = None,
 ) -> Any:
     if supabase_url and supabase_key and SupabaseTenantSettingsRepository is not None:
         try:
-            return SupabaseTenantSettingsRepository(supabase_url, supabase_key)
+            return SupabaseTenantSettingsRepository(
+                supabase_url,
+                supabase_key,
+                codec=codec,
+            )
         except Exception:
             pass
     return None
@@ -256,11 +282,14 @@ def _build_tenant_settings_service(
     batch_params: BatchParams,
     supabase_url: str | None = None,
     supabase_key: str | None = None,
+    *,
+    repository: Any | None = None,
 ) -> Any:
     if TenantSettingsService is None or InMemoryTenantSettingsRepository is None:
         return None
 
-    repository = _build_tenant_settings_repository(supabase_url, supabase_key)
+    if repository is None:
+        repository = _build_tenant_settings_repository(supabase_url, supabase_key)
     if repository is not None:
         return TenantSettingsService(
             repository,
@@ -278,12 +307,13 @@ def _build_tenant_settings_service(
 def _build_prompt_service(
     supabase_url: str | None = None,
     supabase_key: str | None = None,
+    *,
+    repository: Any | None = None,
 ) -> Any:
     if PromptService is None:
         return None
 
-    repository = None
-    if supabase_url and supabase_key and SupabasePromptTemplateRepository is not None:
+    if repository is None and supabase_url and supabase_key and SupabasePromptTemplateRepository is not None:
         try:
             repository = SupabasePromptTemplateRepository(supabase_url, supabase_key)
         except Exception:
@@ -292,15 +322,12 @@ def _build_prompt_service(
     if repository is None:
         return PromptService(config.PROMPTS)
 
-    try:
-        return PromptService(config.PROMPTS, prompt_repository=repository)
-    except TypeError:
-        return PromptService(config.PROMPTS)
+    return PromptService(config.PROMPTS, prompt_repository=repository)
 
 
 def build_dependencies() -> AppDependencies:
     """Prepare wiring for services used by the UI."""
-    if not config.PROJECT_IMPORTS_AVAILABLE:
+    if not config.PROJECT_IMPORTS_AVAILABLE or not _admin_dependencies_available():
         batch_params = load_batch_params()
         auth_service = _build_auth_service()
         tenant_settings_service = _build_tenant_settings_service(batch_params)
@@ -351,20 +378,54 @@ def build_dependencies() -> AppDependencies:
     batch_params = load_batch_params()
     supabase_url = secrets_adapter.get_optional_secret("SUPABASE_URL")
     supabase_key = secrets_adapter.get_optional_secret("SUPABASE_KEY")
-    tenant_settings_repository = _build_tenant_settings_repository(supabase_url, supabase_key)
-    prompt_service = _build_prompt_service(supabase_url, supabase_key)
+    supabase_requested = bool(supabase_url or supabase_key)
+    codec = TenantSecretCodec(secrets_adapter.get_optional_secret("TENANT_SECRETS_MASTER_KEY"))
+    tenant_settings_repository = _build_tenant_settings_repository(
+        supabase_url,
+        supabase_key,
+        codec=codec,
+    )
+    if tenant_settings_repository is None and not supabase_requested:
+        tenant_id = config.DEFAULT_TENANT_ID
+        tenant_settings_repository = InMemoryTenantAdminRepository(
+            tenants={tenant_id: {"display_name": tenant_id, "status": "active"}},
+            settings={},
+            secrets={},
+            prompts={},
+            codec=codec,
+        )
+    if tenant_settings_repository is None:
+        runtime_settings_repository = InMemoryTenantSettingsRepository(
+            settings={},
+            secrets={},
+        )
+        tenant_settings_source = None
+        tenant_admin_settings_service = None
+        prompt_service = _build_prompt_service(supabase_url, supabase_key)
+    else:
+        runtime_settings_repository = tenant_settings_repository
+        tenant_settings_source = tenant_settings_repository
+        tenant_admin_settings_service = TenantAdminSettingsService(
+            tenant_settings_repository
+        )
+        prompt_service = _build_prompt_service(
+            supabase_url,
+            supabase_key,
+            repository=tenant_settings_repository,
+        )
     auth_service = _build_auth_service(supabase_url, supabase_key)
     tenant_settings_service = _build_tenant_settings_service(
         batch_params,
         supabase_url,
         supabase_key,
+        repository=runtime_settings_repository,
     )
 
     _register_gemini_models(ai_registry, secrets_adapter)
 
     tenant_service = _build_tenant_service(
         secrets_adapter,
-        tenant_settings_source=tenant_settings_repository,
+        tenant_settings_source=tenant_settings_source,
     )
     call_log_service = _build_call_log_service(tenant_service, storage_adapter)
 
@@ -426,4 +487,5 @@ def build_dependencies() -> AppDependencies:
         batch_params=batch_params,
         auth_service=auth_service,
         tenant_settings_service=tenant_settings_service,
+        tenant_admin_settings_service=tenant_admin_settings_service,
     )

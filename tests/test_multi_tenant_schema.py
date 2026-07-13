@@ -37,3 +37,12 @@ def test_multi_tenant_schema_declares_required_tables_and_cache_version() -> Non
         "analysis_results",
     ):
         assert f"alter table public.{table_name} enable row level security" in sql
+
+
+def test_mvp_schema_keeps_prompt_index_non_unique_and_needs_no_admin_rpc() -> None:
+    sql = SCHEMA_PATH.read_text(encoding="utf-8").lower()
+
+    assert "create index if not exists idx_tenant_prompt_templates_active" in sql
+    assert "create unique index" not in sql
+    assert "save_tenant_admin_settings" not in sql
+    assert not Path("docs/supabase/migrations/20260712_tenant_admin_settings.sql").exists()

@@ -152,3 +152,52 @@ def test_can_access_tenant_enforces_user_status_and_assignments() -> None:
     assert service.can_access_tenant("user-1", "tenant-b") is False
     assert service.can_access_tenant("inactive-user", "tenant-c") is False
     assert service.can_access_tenant("missing", "tenant-a") is False
+
+
+def test_live_admin_tenants_include_inactive_and_require_current_admin_role() -> None:
+    repository = InMemoryAuthRepository(
+        users=[{"id": "user-1", "login": "alice", "password_hash": "x", "is_active": True}],
+        tenants=[
+            {"id": "active", "display_name": "Active", "status": "active"},
+            {"id": "inactive", "display_name": "Inactive", "status": "inactive"},
+            {"id": "operator", "display_name": "Operator", "status": "active"},
+        ],
+        access=[
+            {"user_id": "user-1", "tenant_id": "active", "role": "ADMIN"},
+            {"user_id": "user-1", "tenant_id": "inactive", "role": "admin"},
+            {"user_id": "user-1", "tenant_id": "operator", "role": "operator"},
+        ],
+    )
+    service = AuthService(repository)
+
+    assert service.list_admin_tenants("user-1") == [
+        TenantSummary("active", "Active", "ADMIN"),
+        TenantSummary("inactive", "Inactive", "admin"),
+    ]
+    assert service.list_admin_tenants("user-1", include_inactive=False) == [
+        TenantSummary("active", "Active", "ADMIN")
+    ]
+    assert service.can_administer_tenant("user-1", "inactive") is True
+
+    repository._access_by_user["user-1"][1] = repository._access_by_user["user-1"][1].__class__(
+        "user-1", "inactive", "operator"
+    )
+    assert service.can_administer_tenant("user-1", "inactive") is False
+    assert service.can_administer_tenant("user-1", "forged") is False
+
+
+def test_live_admin_authorization_rejects_inactive_user_and_removed_access() -> None:
+    repository = InMemoryAuthRepository(
+        users=[{"id": "user-1", "login": "alice", "password_hash": "x", "is_active": False}],
+        tenants=[{"id": "tenant-a", "display_name": "A", "status": "active"}],
+        access=[{"user_id": "user-1", "tenant_id": "tenant-a", "role": "admin"}],
+    )
+    service = AuthService(repository)
+    assert service.list_admin_tenants("user-1") == []
+    assert service.can_administer_tenant("user-1", "tenant-a") is False
+
+    repository._users_by_id["user-1"] = repository._users_by_id["user-1"].__class__(
+        "user-1", "alice", "x", "alice", True
+    )
+    repository._access_by_user["user-1"].clear()
+    assert service.can_administer_tenant("user-1", "tenant-a") is False

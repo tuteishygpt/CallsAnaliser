@@ -67,6 +67,9 @@ class AuthRepository(Protocol):
     def list_access_for_user(self, user_id: str) -> list[TenantAccessRecord]:
         """Return tenant access rows assigned to ``user_id``."""
 
+    def get_tenant_including_inactive(self, tenant_id: str) -> TenantRecord | None:
+        """Return tenant metadata regardless of status."""
+
 
 def hash_password(
     password: str,
@@ -155,6 +158,31 @@ class AuthService:
     def can_access_tenant(self, user_id: str, tenant_id: str) -> bool:
         return any(tenant.tenant_id == tenant_id for tenant in self.list_allowed_tenants(user_id))
 
+    def list_admin_tenants(
+        self, user_id: str, *, include_inactive: bool = True
+    ) -> list[TenantSummary]:
+        """Return tenants the active user currently administers."""
+        user = self._repository.get_user_by_id(user_id)
+        if user is None or not user.is_active:
+            return []
+
+        summaries: list[TenantSummary] = []
+        for access in self._repository.list_access_for_user(user_id):
+            if access.role.strip().casefold() != "admin":
+                continue
+            tenant = self._repository.get_tenant_including_inactive(access.tenant_id)
+            if tenant is None or (not include_inactive and not tenant.is_active):
+                continue
+            summaries.append(TenantSummary(tenant.tenant_id, tenant.display_name, access.role))
+        return summaries
+
+    def can_administer_tenant(self, user_id: str, tenant_id: str) -> bool:
+        """Check current admin access, including access to inactive tenants."""
+        return any(
+            tenant.tenant_id == tenant_id
+            for tenant in self.list_admin_tenants(user_id, include_inactive=True)
+        )
+
 
 class InMemoryAuthRepository:
     """In-memory auth repository for tests and local wiring experiments."""
@@ -194,6 +222,10 @@ class InMemoryAuthRepository:
         return self._users_by_id.get(user_id)
 
     def get_tenant(self, tenant_id: str) -> TenantRecord | None:
+        tenant = self._tenants_by_id.get(tenant_id)
+        return tenant if tenant is not None and tenant.is_active else None
+
+    def get_tenant_including_inactive(self, tenant_id: str) -> TenantRecord | None:
         return self._tenants_by_id.get(tenant_id)
 
     def list_access_for_user(self, user_id: str) -> list[TenantAccessRecord]:

@@ -18,6 +18,7 @@ from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult
 from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner, guess_mime_type
+from calls_analyser.services.tenant_admin_settings import TenantAdminValidationError
 from calls_analyser.services.usage_report import (
     ALL_VALUE,
     UsageReportFilters,
@@ -403,6 +404,118 @@ class UIHandlers:
             return False, None, "Enter the password to continue."
 
         return True, (tenant_id or config.DEFAULT_TENANT_ID).strip(), ""
+
+    def refresh_admin_tenants(self, auth_session, current_tenant=None):
+        """Refresh administrator choices from the live authorization source."""
+        if not self._auth_session_active(auth_session):
+            return gr.update(choices=[], value=None, visible=True), gr.update(visible=False)
+        auth_service = getattr(self.deps, "auth_service", None)
+        try:
+            tenants = auth_service.list_admin_tenants(
+                str(auth_session.get("user_id")), include_inactive=True
+            )
+        except Exception:
+            tenants = []
+        choices = [
+            (f"{tenant.display_name} ({tenant.role})", tenant.tenant_id)
+            for tenant in tenants
+        ]
+        current = str(current_tenant or "").strip()
+        live_ids = {tenant.tenant_id for tenant in tenants}
+        if current:
+            selected = current if current in live_ids else None
+        else:
+            selected = tenants[0].tenant_id if len(tenants) == 1 else None
+        return (
+            gr.update(choices=choices, value=selected, visible=True),
+            gr.update(visible=bool(tenants)),
+        )
+
+    def _authorize_tenant_admin(self, tenant_id, auth_session):
+        if not self._auth_session_active(auth_session):
+            return False, None, None
+        selected = str(tenant_id or "").strip()
+        if not selected:
+            return False, None, None
+        user_id = str(auth_session.get("user_id"))
+        try:
+            allowed = self.deps.auth_service.can_administer_tenant(user_id, selected)
+        except Exception:
+            allowed = False
+        return bool(allowed), selected, user_id
+
+    def load_tenant_admin_settings(self, tenant_id, auth_session):
+        allowed, selected, _user_id = self._authorize_tenant_admin(tenant_id, auth_session)
+        if not allowed:
+            return {}, "Access denied."
+        try:
+            return self.deps.tenant_admin_settings_service.load(selected), "Settings loaded."
+        except Exception:
+            return {}, "Unable to load tenant settings."
+
+    def save_tenant_admin_settings(self, tenant_id, document, auth_session):
+        allowed, selected, user_id = self._authorize_tenant_admin(tenant_id, auth_session)
+        if not allowed:
+            return {}, "Access denied."
+        try:
+            saved = self.deps.tenant_admin_settings_service.save(selected, document, user_id)
+            return saved, "Settings saved."
+        except TenantAdminValidationError as exc:
+            return {}, str(exc)
+        except Exception:
+            return {}, "Unable to save tenant settings."
+
+    TENANT_ADMIN_EDITABLE_FIELDS = (
+        "display_name", "status", "telephony_provider", "vochi_base_url",
+        "vochi_api_key", "mts_domain", "mts_api_key", "default_language",
+        "default_model_key", "batch_language_code", "batch_model_key", "batch_enabled",
+        "batch_size", "custom_batch_enabled", "scheduler_enabled", "scheduler_mode",
+        "scheduler_cron_time", "scheduler_interval_minutes", "scheduler_time_from",
+        "scheduler_time_to", "scheduler_call_type", "email_to", "email_from",
+        "email_from_name",
+    )
+    TENANT_ADMIN_OUTPUT_FIELDS = (
+        "tenant_id", *TENANT_ADMIN_EDITABLE_FIELDS, "active_prompts",
+    )
+
+    @classmethod
+    def _tenant_admin_form_result(cls, document, status):
+        enabled = bool(document.get("tenant_id"))
+        values = []
+        for field in cls.TENANT_ADMIN_OUTPUT_FIELDS:
+            value = document.get(field)
+            interactive = enabled and field not in {"tenant_id", "active_prompts"}
+            if field == "active_prompts":
+                value = [
+                    [
+                        prompt.get("key", ""),
+                        prompt.get("title", ""),
+                        prompt.get("body", ""),
+                        prompt.get("version", ""),
+                    ]
+                    for prompt in value or []
+                ]
+            values.append(gr.update(value=value, interactive=interactive))
+        return (
+            *values,
+            status,
+            gr.update(interactive=enabled),
+            gr.update(interactive=enabled),
+        )
+
+    def load_tenant_admin_form(self, tenant_id, auth_session):
+        document, status = self.load_tenant_admin_settings(tenant_id, auth_session)
+        return self._tenant_admin_form_result(document, status)
+
+    def save_tenant_admin_form(self, tenant_id, *values):
+        auth_session = values[-1]
+        form_values = values[:-1]
+        document = dict(zip(self.TENANT_ADMIN_EDITABLE_FIELDS, form_values))
+        document["tenant_id"] = tenant_id
+        saved, status = self.save_tenant_admin_settings(tenant_id, document, auth_session)
+        if not saved:
+            saved = document
+        return self._tenant_admin_form_result(saved, status)
 
     @staticmethod
     def _legacy_password_result(pwd: str):

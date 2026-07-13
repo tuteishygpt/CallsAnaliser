@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
+    "cryptography>=42.0.0",
     "fastapi>=0.111.0",
     "google-genai>=0.6.0",
     "google-cloud-storage>=2.14.0",
