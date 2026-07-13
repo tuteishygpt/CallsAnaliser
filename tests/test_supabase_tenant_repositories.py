@@ -249,6 +249,45 @@ def test_prompt_service_resolves_latest_active_supabase_tenant_prompt_before_glo
     assert service.list_templates("tenant-a")["detailed"].version == 3
 
 
+def test_shared_supabase_repository_supports_prompt_service_contract() -> None:
+    repository = SupabaseTenantSettingsRepository(
+        client=_FakeClient(
+            {
+                "tenant_prompt_templates": [
+                    {
+                        "tenant_id": "tenant-a",
+                        "key": "simple",
+                        "title": "Tenant Simple",
+                        "body": "tenant prompt",
+                        "version": 2,
+                        "is_active": True,
+                    },
+                    {
+                        "tenant_id": "tenant-a",
+                        "key": "detailed",
+                        "title": "Tenant Detailed",
+                        "body": "tenant detailed",
+                        "version": 3,
+                        "is_active": True,
+                    },
+                ],
+            }
+        )
+    )
+    service = PromptService(
+        {"simple": PromptTemplate(key="simple", title="Global Simple", body="global")},
+        prompt_repository=repository,
+    )
+
+    assert service.get_prompt("simple", tenant_id="tenant-a") == PromptTemplate(
+        key="simple",
+        title="Tenant Simple",
+        body="tenant prompt",
+        version=2,
+    )
+    assert service.list_templates("tenant-a")["detailed"].version == 3
+
+
 def test_supabase_shared_repository_uses_focused_encrypted_writes() -> None:
     key = base64.urlsafe_b64encode(b"z" * 32).decode().rstrip("=")
     codec = TenantSecretCodec(key)

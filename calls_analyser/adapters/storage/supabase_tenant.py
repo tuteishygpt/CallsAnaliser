@@ -189,6 +189,33 @@ class SupabaseTenantSettingsRepository:
         )
         return [dict(row) for row in rows]
 
+    def get_template(self, tenant_id: str, key: str) -> PromptTemplate | None:
+        rows = _execute_rows(
+            self._client.table("tenant_prompt_templates")
+            .select("key, title, body, version")
+            .eq("tenant_id", tenant_id)
+            .eq("key", key)
+            .eq("is_active", True)
+            .order("version", desc=True)
+            .limit(1)
+        )
+        return _prompt_template(rows[0]) if rows else None
+
+    def list_templates(self, tenant_id: str) -> Mapping[str, PromptTemplate]:
+        rows = _execute_rows(
+            self._client.table("tenant_prompt_templates")
+            .select("key, title, body, version")
+            .eq("tenant_id", tenant_id)
+            .eq("is_active", True)
+            .order("version", desc=True)
+        )
+        templates: dict[str, PromptTemplate] = {}
+        for row in rows:
+            key = str(row["key"])
+            if key not in templates:
+                templates[key] = _prompt_template(row)
+        return templates
+
     def read_raw_document(self, tenant_id: str) -> Mapping[str, Any]:
         return {
             "tenant": self.read_tenant_profile(tenant_id),
