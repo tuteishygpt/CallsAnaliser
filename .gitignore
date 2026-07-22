@@ -11,6 +11,8 @@ canvas-genius-492412-c3-53a1b90ffc0d.json
 venv/
 .tmp_*.txt
 .seg.txt
+.local-app.*
+outputs/
 
 # Local workspace files
 .cache/analysis_cache.json
