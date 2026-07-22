@@ -277,6 +277,12 @@ def test_model_candidates_include_current_gemini_audio_analysis_models():
     } <= model_keys
 
 
+def test_batch_model_default_is_gemini_3_1_flash_lite():
+    from calls_analyser import config
+
+    assert config.BATCH_MODEL_KEY == "models/gemini-3.1-flash-lite"
+
+
 def test_entrypoints_have_no_credential_tempfile_bootstrap():
     root = Path(__file__).parents[1]
     for relative in ("app.py", "calls_analyser/runner.py"):

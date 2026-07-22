@@ -33,6 +33,45 @@ class UIHandlers:
     # ----------------------------------------------------------------------------
     # Internal helpers
     # ----------------------------------------------------------------------------
+    def _resolve_tenant_batch_runtime(self, tenant) -> tuple[str, config.Language]:
+        runtime_settings = None
+        tenant_settings_service = getattr(self.deps, "tenant_settings_service", None)
+        resolve_settings = getattr(tenant_settings_service, "resolve", None)
+        if callable(resolve_settings):
+            try:
+                runtime_settings = resolve_settings(tenant.tenant_id)
+            except Exception:
+                runtime_settings = None
+
+        return (
+            self._resolve_batch_model_key(runtime_settings),
+            self._resolve_batch_language(runtime_settings),
+        )
+
+    def _resolve_batch_model_key(self, runtime_settings) -> str:
+        tenant_model_key = getattr(runtime_settings, "batch_model_key", None)
+        if isinstance(tenant_model_key, str) and tenant_model_key.strip():
+            return tenant_model_key.strip()
+        return self.deps.batch_model_key
+
+    def _resolve_batch_language(self, runtime_settings) -> config.Language:
+        tenant_language_code = getattr(
+            runtime_settings, "batch_language_code", None
+        )
+        normalized_language_code = (
+            tenant_language_code.strip().lower()
+            if isinstance(tenant_language_code, str)
+            else ""
+        )
+        if normalized_language_code in {"auto", "default"}:
+            return config.Language.AUTO
+        if normalized_language_code:
+            try:
+                return config.Language(normalized_language_code)
+            except ValueError:
+                pass
+        return self.deps.batch_language
+
     @staticmethod
     def _parse_follow_up_fields(text: str) -> tuple[str, str]:
         text_clean = str(text or "").strip()
@@ -1078,16 +1117,6 @@ class UIHandlers:
             )
             return
 
-        if len(self.deps.ai_registry) == 0 or not self.deps.batch_model_key:
-            yield (
-                hidden_df_update,
-                empty_state,
-                h2_error("❌ Batch analysis is unavailable: AI model is not configured."),
-                hidden_file,
-                hidden_filter,
-            )
-            return
-
         try:
             day = utils.parse_day(date_value)
             time_from = utils.parse_time_value(time_from_value)
@@ -1096,6 +1125,26 @@ class UIHandlers:
             call_type = utils.resolve_call_type(call_type_value)
 
             tenant = self.deps.tenant_service.resolve(selected_tenant or None)
+            effective_model_key, effective_language = (
+                self._resolve_tenant_batch_runtime(tenant)
+            )
+
+            try:
+                configured_provider = self.deps.ai_registry.get(effective_model_key)
+            except KeyError:
+                configured_provider = None
+            if configured_provider is None:
+                yield (
+                    hidden_df_update,
+                    empty_state,
+                    h2_error(
+                        f"❌ Configured batch model '{effective_model_key}' is not available."
+                    ),
+                    hidden_file,
+                    hidden_filter,
+                )
+                return
+
             entries = self.deps.call_log_service.list_calls(
                 day,
                 tenant,
@@ -1141,9 +1190,9 @@ class UIHandlers:
                     result = self.deps.analysis_service.analyze_call(
                         unique_id=entry.unique_id,
                         tenant=tenant,
-                        lang=self.deps.batch_language,
+                        lang=effective_language,
                         options=AnalysisOptions(
-                            model_key=self.deps.batch_model_key,
+                            model_key=effective_model_key,
                             prompt_key=self.deps.batch_prompt_key,
                             custom_prompt=prompt_override,
                             mode="ui_mass",

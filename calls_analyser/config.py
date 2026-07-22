@@ -108,7 +108,7 @@ MODEL_CANDIDATES = [
 # ---------------------------
 # Batch analysis configuration
 # ---------------------------
-BATCH_MODEL_KEY = "models/gemini-2.5-flash-lite"
+BATCH_MODEL_KEY = "models/gemini-3.1-flash-lite"
 BATCH_PROMPT_KEY = "BATCH_PROMPT"
 BATCH_PROMPT_TEXT = _BATCH_PROMPT_BODY
 # ISO language code for batch (app converts to Language enum)

@@ -28,8 +28,10 @@ class _StubTenantService:
 class _StubCallLogService:
     def __init__(self, entries: list[SimpleNamespace]) -> None:
         self._entries = entries
+        self.list_calls_count = 0
 
     def list_calls(self, *_, **__) -> list[SimpleNamespace]:
+        self.list_calls_count += 1
         return list(self._entries)
 
 
@@ -37,9 +39,11 @@ class _StubAnalysisService:
     def __init__(self, responses: dict[str, str | Exception]) -> None:
         self._responses = responses
         self.calls: list[tuple[str, SimpleNamespace, object]] = []
+        self.languages: list[object] = []
 
     def analyze_call(self, unique_id: str, tenant: SimpleNamespace, lang, options):  # noqa: ANN001
         self.calls.append((unique_id, tenant, options))
+        self.languages.append(lang)
         response = self._responses[unique_id]
         if isinstance(response, Exception):
             raise response
@@ -76,6 +80,7 @@ def _configure_batch_environment(
     monkeypatch.setattr(app, "BATCH_PROMPT_TEXT", "")
     monkeypatch.setattr(app, "BATCH_LANGUAGE", app.Language.ENGLISH)
     monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", None, raising=False)
 
     analysis: _StubAnalysisService | None = None
     if responses is not None:
@@ -83,6 +88,30 @@ def _configure_batch_environment(
         monkeypatch.setattr(app, "analysis_service", analysis)
 
     return tenant, analysis
+
+
+class _StubTenantSettingsService:
+    def __init__(self, settings: object = None, error: Exception | None = None) -> None:
+        self.settings = settings
+        self.error = error
+        self.calls: list[str] = []
+
+    def resolve(self, tenant_id: str) -> object:
+        self.calls.append(tenant_id)
+        if self.error is not None:
+            raise self.error
+        return self.settings
+
+
+def _batch_entry(unique_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        started_at=dt.datetime(2024, 2, 15, 9, 30),
+        caller_id="Alice",
+        destination="Support",
+        duration_seconds=123,
+        unique_id=unique_id,
+        raw={},
+    )
 
 
 def test_ui_mass_analyze_requires_authentication() -> None:
@@ -190,6 +219,116 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
+
+
+def test_ui_mass_analyze_resolves_tenant_batch_model_and_language_once(monkeypatch) -> None:
+    entries = [_batch_entry("call-1"), _batch_entry("call-2")]
+    tenant, analysis = _configure_batch_environment(
+        monkeypatch,
+        entries=entries,
+        responses={"call-1": "{}", "call-2": "{}"},
+    )
+    settings_service = _StubTenantSettingsService(
+        SimpleNamespace(batch_model_key="tenant-model", batch_language_code="be")
+    )
+    monkeypatch.setattr(
+        app, "ai_registry", {"fake-model": object(), "tenant-model": object()}
+    )
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert settings_service.calls == [tenant.tenant_id]
+    assert analysis is not None
+    assert [call[2].model_key for call in analysis.calls] == [
+        "tenant-model",
+        "tenant-model",
+    ]
+    assert analysis.languages == [app.Language.BELARUSIAN, app.Language.BELARUSIAN]
+
+
+@pytest.mark.parametrize("language_code", ["", "invalid"])
+def test_ui_mass_analyze_falls_back_for_blank_or_invalid_tenant_language(
+    monkeypatch, language_code
+) -> None:
+    tenant, analysis = _configure_batch_environment(
+        monkeypatch,
+        entries=[_batch_entry("call-1")],
+        responses={"call-1": "{}"},
+    )
+    settings_service = _StubTenantSettingsService(
+        SimpleNamespace(batch_model_key="", batch_language_code=language_code)
+    )
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert analysis is not None
+    assert analysis.calls[0][2].model_key == "fake-model"
+    assert analysis.languages == [app.Language.ENGLISH]
+
+
+@pytest.mark.parametrize("language_code", ["auto", "default"])
+def test_ui_mass_analyze_maps_auto_language_aliases(monkeypatch, language_code) -> None:
+    tenant, analysis = _configure_batch_environment(
+        monkeypatch,
+        entries=[_batch_entry("call-1")],
+        responses={"call-1": "{}"},
+    )
+    settings_service = _StubTenantSettingsService(
+        SimpleNamespace(batch_model_key="", batch_language_code=language_code)
+    )
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert analysis is not None
+    assert analysis.languages == [app.Language.AUTO]
+
+
+def test_ui_mass_analyze_falls_back_when_tenant_settings_resolution_throws(monkeypatch) -> None:
+    tenant, analysis = _configure_batch_environment(
+        monkeypatch,
+        entries=[_batch_entry("call-1")],
+        responses={"call-1": "{}"},
+    )
+    settings_service = _StubTenantSettingsService(error=RuntimeError("settings unavailable"))
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert settings_service.calls == [tenant.tenant_id]
+    assert analysis is not None
+    assert analysis.calls[0][2].model_key == "fake-model"
+    assert analysis.languages == [app.Language.ENGLISH]
+
+
+def test_ui_mass_analyze_rejects_unknown_tenant_model_before_listing_calls(monkeypatch) -> None:
+    tenant, _ = _configure_batch_environment(monkeypatch, entries=[_batch_entry("call-1")])
+    settings_service = _StubTenantSettingsService(
+        SimpleNamespace(batch_model_key="unknown-model", batch_language_code="en")
+    )
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    result = list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert result[0][2] == "## ❌ Configured batch model 'unknown-model' is not available."
+    assert app.call_log_service.list_calls_count == 0
+
+
+def test_ui_mass_analyze_does_not_mask_unexpected_registry_errors(monkeypatch) -> None:
+    tenant, _ = _configure_batch_environment(monkeypatch, entries=[_batch_entry("call-1")])
+
+    class BrokenRegistry:
+        def get(self, key):  # noqa: ANN001
+            raise RuntimeError("registry exploded")
+
+    monkeypatch.setattr(app, "ai_registry", BrokenRegistry())
+
+    result = list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
+
+    assert result[0][2] == "## ❌ Analysis failed: registry exploded"
+    assert app.call_log_service.list_calls_count == 0
 
 
 def test_send_results_email_uses_selected_filter_and_full_results(monkeypatch) -> None:
@@ -733,3 +872,47 @@ def test_direct_analysis_accepts_unique_id_dropdown_value_when_state_is_empty(mo
 
     assert output[-1] == "### Analysis result\n\nanalysis"
     assert analysis.calls[0][0] == "call-1"
+
+
+def test_direct_analysis_uses_dropdown_model_without_resolving_tenant_batch_settings(
+    monkeypatch,
+) -> None:
+    tenant = SimpleNamespace(
+        tenant_id="tenant",
+        provider="vochi",
+        recording_url=lambda unique_id: f"https://bot.example/recording/{unique_id}",
+    )
+    analysis = _StubAnalysisService({"call-1": "analysis"})
+    settings_service = _StubTenantSettingsService(
+        SimpleNamespace(batch_model_key="tenant-batch-model", batch_language_code="be")
+    )
+    monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "project_imports_available", True)
+    monkeypatch.setattr(app.handlers.deps, "tenant_service", _StubTenantService(tenant))
+    monkeypatch.setattr(
+        app.handlers.deps,
+        "ai_registry",
+        {"dropdown-model": object(), "tenant-batch-model": object()},
+    )
+    monkeypatch.setattr(app.handlers.deps, "analysis_service", analysis)
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", settings_service)
+
+    output = list(
+        app.handlers.analyze_bridge(
+            "call-1",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            "simple",
+            "",
+            app.Language.ENGLISH,
+            "dropdown-model",
+            tenant.tenant_id,
+            "",
+            True,
+        )
+    )
+
+    assert output[-1] == "### Analysis result\n\nanalysis"
+    assert settings_service.calls == []
+    assert analysis.calls[0][2].model_key == "dropdown-model"
+    assert analysis.languages == [app.Language.ENGLISH]
