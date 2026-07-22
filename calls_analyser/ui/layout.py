@@ -55,6 +55,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 label="Password", type="password", placeholder="••••••••", lines=1
             )
             pwd_btn = gr.Button("Unlock", variant="primary")
+            login_status = gr.Markdown()
 
         with gr.Tabs() as tabs:  # noqa: F841
             with gr.Tab("Calls"):
@@ -376,7 +377,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             outputs=[
                 authed,
                 auth_session,
-                status_fetch,
+                login_status,
                 pwd_group,
                 tenant_dd,
                 tenant_report_dd,

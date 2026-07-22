@@ -1298,7 +1298,7 @@ class UIHandlers:
             response = (
                 False,
                 {},
-                "Incorrect login or password.",
+                "❌ Incorrect login or password.",
                 gr.update(visible=True),
                 empty_update,
                 empty_update,

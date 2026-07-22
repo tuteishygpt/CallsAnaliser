@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -171,11 +172,25 @@ def test_denied_login_does_not_authenticate() -> None:
 
     assert authed is False
     assert session == {}
-    assert "Incorrect" in message
+    assert message == "❌ Incorrect login or password."
     assert group_update["visible"] is True
     assert tenant_update["choices"] == []
     assert report_tenant_update["choices"] == []
     assert report_tab_update["visible"] is False
+
+
+def test_login_layout_uses_dedicated_status_below_login_button() -> None:
+    source = Path("calls_analyser/ui/layout.py").read_text(encoding="utf-8")
+    login_group = source.split("with gr.Group(", 1)[1].split("with gr.Tabs()", 1)[0]
+    login_event = source.split("login_event = pwd_btn.click(", 1)[1].split(
+        "tenant_admin_outputs =", 1
+    )[0]
+
+    assert login_group.index("pwd_btn = gr.Button") < login_group.index(
+        "login_status = gr.Markdown"
+    )
+    assert "login_status," in login_event
+    assert "status_fetch," not in login_event
 
 
 def test_login_without_admin_role_hides_reports_tab() -> None:
