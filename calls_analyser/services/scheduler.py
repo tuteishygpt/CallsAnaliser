@@ -64,6 +64,9 @@ def run_scheduled_batch_for_tenant(
 
     _require_aware(scheduled_for, "scheduled_for")
     _require_aware(now, "now")
+    if not bool(getattr(runtime_settings, "batch_enabled", True)):
+        raise RuntimeError(f"Batch processing is disabled for tenant {tenant_id}")
+
     context = resolve_batch_execution_context(
         deps,
         tenant_id=tenant_id,

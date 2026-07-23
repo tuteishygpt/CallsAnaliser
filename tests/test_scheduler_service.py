@@ -238,6 +238,32 @@ def test_missing_repository_fails_closed_without_runner(monkeypatch) -> None:
     assert runner.calls == []
 
 
+def test_disabled_batch_fails_before_context_claim_or_runner(monkeypatch) -> None:
+    resolver_calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "resolve_batch_execution_context",
+        lambda *args, **kwargs: resolver_calls.append(1) or _context(),
+    )
+    repository = RecordingRepository()
+    runner = RecordingRunner()
+
+    with pytest.raises(RuntimeError, match="disabled"):
+        scheduler.run_scheduled_batch_for_tenant(
+            tenant_id="tenant-a",
+            runtime_settings=SimpleNamespace(batch_enabled=False),
+            scheduled_for=dt.datetime(2026, 7, 23, tzinfo=UTC),
+            now=dt.datetime(2026, 7, 23, tzinfo=UTC),
+            run_repository=repository,
+            runner=runner,
+            deps=object(),
+        )
+
+    assert resolver_calls == []
+    assert repository.claimed_keys == []
+    assert runner.calls == []
+
+
 def test_naive_now_fails_before_context_claim_or_runner(monkeypatch) -> None:
     resolver_calls = []
     monkeypatch.setattr(
