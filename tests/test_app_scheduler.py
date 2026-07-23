@@ -2,22 +2,40 @@ from __future__ import annotations
 
 import datetime as dt
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import app
 
 
-class FrozenDate(dt.date):
-    @classmethod
-    def today(cls) -> dt.date:
-        return cls(2026, 7, 7)
+class RecordingScheduler:
+    def __init__(self) -> None:
+        self.jobs: list[dict[str, object]] = []
+        self.start_calls = 0
+
+    def add_job(self, job, trigger, **kwargs):  # noqa: ANN001
+        self.jobs.append({"job": job, "trigger": trigger, **kwargs})
+
+    def start(self) -> None:
+        self.start_calls += 1
 
 
-def _batch_params(**overrides) -> SimpleNamespace:
+class FakeTenantSettingsService:
+    def __init__(self, settings_by_tenant) -> None:  # noqa: ANN001
+        self.settings_by_tenant = dict(settings_by_tenant)
+        self.list_calls = 0
+        self.resolve_calls: list[str] = []
+
+    def list_scheduler_enabled_tenants(self):
+        self.list_calls += 1
+        return list(self.settings_by_tenant)
+
+    def resolve(self, tenant_id: str):
+        self.resolve_calls.append(tenant_id)
+        return self.settings_by_tenant[tenant_id]
+
+
+def _settings(**overrides) -> SimpleNamespace:
     values = {
-        "filter_time_from": "09:00",
-        "filter_time_to": "18:00",
-        "filter_call_type": "missed",
-        "scheduler_enabled": True,
         "scheduler_mode": "cron",
         "scheduler_cron_time": "02:30",
         "scheduler_interval_minutes": 45,
@@ -26,189 +44,253 @@ def _batch_params(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-class RecordingScheduler:
-    def __init__(self) -> None:
-        self.jobs = []
-        self.started = False
-
-    def add_job(self, job, trigger, **kwargs):  # noqa: ANN001
-        self.jobs.append({"job": job, "trigger": trigger, **kwargs})
-
-    def start(self) -> None:
-        self.started = True
-
-
-class FakeTenantSettingsService:
-    def __init__(self, enabled_tenants) -> None:  # noqa: ANN001
-        self._enabled_tenants = list(enabled_tenants)
-        self.list_calls = 0
-
-    def list_scheduler_enabled_tenants(self):
-        self.list_calls += 1
-        return list(self._enabled_tenants)
-
-
-def test_scheduled_job_uses_multi_tenant_scheduler_service(monkeypatch) -> None:
-    tenant_settings_service = object()
-    deps = SimpleNamespace(
-        batch_params=_batch_params(),
-        tenant_settings_service=tenant_settings_service,
-    )
-    calls = []
-
-    def fake_run_scheduled_batches_for_enabled_tenants(
-        tenant_settings_service,
-        runner,
-        deps,
-        day,
-    ):  # noqa: ANN001
-        calls.append(
-            {
-                "tenant_settings_service": tenant_settings_service,
-                "runner": runner,
-                "deps": deps,
-                "day": day,
-            }
-        )
-        return SimpleNamespace(
-            successes=[object(), object()],
-            failures=[
-                SimpleNamespace(
-                    tenant_id="tenant-bad",
-                    exception_type="RuntimeError",
-                    error="batch failed",
-                )
-            ],
-        )
-
-    monkeypatch.setattr(app, "deps", deps)
-    monkeypatch.setattr(app.datetime, "date", FrozenDate)
-    monkeypatch.setattr(
-        app,
-        "run_scheduled_batches_for_enabled_tenants",
-        fake_run_scheduled_batches_for_enabled_tenants,
-        raising=False,
-    )
-
-    app.run_scheduled_job()
-
-    assert calls == [
+def test_registers_one_tenant_specific_job_for_each_enabled_tenant(monkeypatch) -> None:
+    tenant_settings = FakeTenantSettingsService(
         {
-            "tenant_settings_service": tenant_settings_service,
-            "runner": app.daily_runner.run_batch_process,
-            "deps": deps,
-            "day": dt.date(2026, 7, 6),
+            "tenant-cron": _settings(),
+            "tenant-interval": _settings(
+                scheduler_mode="interval",
+                scheduler_interval_minutes=17,
+            ),
         }
-    ]
-
-
-def test_scheduled_job_preserves_legacy_runner_call_without_tenant_settings_service(
-    monkeypatch,
-) -> None:
-    deps = SimpleNamespace(batch_params=_batch_params(), tenant_settings_service=None)
-    calls = []
-
-    def fake_run_batch_process(
-        deps,
-        day,
-        time_from_str,
-        time_to_str,
-        call_type_str,
-        tenant_id_arg,
-    ):  # noqa: ANN001
-        calls.append(
-            {
-                "deps": deps,
-                "day": day,
-                "time_from_str": time_from_str,
-                "time_to_str": time_to_str,
-                "call_type_str": call_type_str,
-                "tenant_id_arg": tenant_id_arg,
-            }
-        )
-
-    monkeypatch.setattr(app, "deps", deps)
-    monkeypatch.setattr(app.datetime, "date", FrozenDate)
-    monkeypatch.setattr(app.daily_runner, "run_batch_process", fake_run_batch_process)
-
-    app.run_scheduled_job()
-
-    assert calls == [
-        {
-            "deps": deps,
-            "day": dt.date(2026, 7, 6),
-            "time_from_str": "09:00",
-            "time_to_str": "18:00",
-            "call_type_str": "missed",
-            "tenant_id_arg": None,
-        }
-    ]
-
-
-def test_scheduler_registration_uses_tenant_enabled_list_when_global_disabled() -> None:
-    tenant_settings_service = FakeTenantSettingsService(["tenant-a"])
+    )
     deps = SimpleNamespace(
-        batch_params=_batch_params(scheduler_enabled=False),
-        tenant_settings_service=tenant_settings_service,
+        tenant_settings_service=tenant_settings,
+        scheduler_run_repository=object(),
     )
     scheduler = RecordingScheduler()
-    job = object()
+    monkeypatch.setenv("SCHEDULER_TIMEZONE", "Europe/Nicosia")
 
-    registered = app._register_scheduler_job_if_available(scheduler, deps, job)
+    registered = app._register_scheduler_jobs_if_available(
+        scheduler,
+        deps,
+        runner=object(),
+    )
 
     assert registered is True
-    assert scheduler.started is True
-    assert scheduler.jobs == [
-        {
-            "job": job,
-            "trigger": "cron",
-            "hour": 2,
-            "minute": 30,
-        }
-    ]
-    assert tenant_settings_service.list_calls == 1
+    assert scheduler.start_calls == 1
+    assert tenant_settings.list_calls == 1
+    assert tenant_settings.resolve_calls == ["tenant-cron", "tenant-interval"]
+    assert len(scheduler.jobs) == 2
+    cron_job, interval_job = scheduler.jobs
+    assert cron_job == {
+        "job": cron_job["job"],
+        "trigger": "cron",
+        "hour": 2,
+        "minute": 30,
+        "timezone": ZoneInfo("Europe/Nicosia"),
+        "id": "scheduler:tenant-cron",
+        "replace_existing": True,
+        "max_instances": 1,
+    }
+    assert interval_job == {
+        "job": interval_job["job"],
+        "trigger": "interval",
+        "minutes": 17,
+        "timezone": ZoneInfo("Europe/Nicosia"),
+        "id": "scheduler:tenant-interval",
+        "replace_existing": True,
+        "max_instances": 1,
+    }
 
 
-def test_scheduler_registration_skips_multi_tenant_scheduler_when_no_tenants_enabled() -> None:
-    tenant_settings_service = FakeTenantSettingsService([])
+def test_delayed_cron_job_uses_planned_minute_and_frozen_runtime_settings(
+    monkeypatch,
+) -> None:
+    runtime_settings = _settings(scheduler_cron_time="02:30")
+    tenant_settings = FakeTenantSettingsService({"tenant-a": runtime_settings})
+    repository = object()
+    runner = object()
     deps = SimpleNamespace(
-        batch_params=_batch_params(scheduler_enabled=True),
-        tenant_settings_service=tenant_settings_service,
+        tenant_settings_service=tenant_settings,
+        scheduler_run_repository=repository,
     )
     scheduler = RecordingScheduler()
+    calls: list[dict[str, object]] = []
+    delayed_now = dt.datetime(2026, 7, 23, 2, 37, tzinfo=ZoneInfo("Europe/Nicosia"))
 
-    registered = app._register_scheduler_job_if_available(scheduler, deps, object())
+    monkeypatch.setenv("SCHEDULER_TIMEZONE", "Europe/Nicosia")
+    monkeypatch.setattr(app, "_scheduler_now", lambda timezone: delayed_now)
+    monkeypatch.setattr(
+        app,
+        "run_scheduled_batch_for_tenant",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    app._register_scheduler_jobs_if_available(scheduler, deps, runner=runner)
+    scheduler.jobs[0]["job"]()
+
+    assert calls == [
+        {
+            "tenant_id": "tenant-a",
+            "runtime_settings": runtime_settings,
+            "scheduled_for": dt.datetime(
+                2026,
+                7,
+                22,
+                23,
+                30,
+                tzinfo=dt.timezone.utc,
+            ),
+            "now": delayed_now,
+            "run_repository": repository,
+            "runner": runner,
+            "deps": deps,
+        }
+    ]
+
+
+def test_same_mode_tenant_closures_keep_their_own_tenant_settings_and_trigger(
+    monkeypatch,
+) -> None:
+    settings_a = _settings(scheduler_cron_time="01:15")
+    settings_b = _settings(scheduler_cron_time="04:45")
+    deps = SimpleNamespace(
+        tenant_settings_service=FakeTenantSettingsService(
+            {"tenant-a": settings_a, "tenant-b": settings_b}
+        ),
+        scheduler_run_repository=object(),
+    )
+    scheduler = RecordingScheduler()
+    now = dt.datetime(2026, 7, 23, 5, 0, tzinfo=dt.timezone.utc)
+    calls = []
+    monkeypatch.delenv("SCHEDULER_TIMEZONE", raising=False)
+    monkeypatch.setattr(app, "_scheduler_now", lambda timezone: now)
+    monkeypatch.setattr(
+        app,
+        "run_scheduled_batch_for_tenant",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    app._register_scheduler_jobs_if_available(scheduler, deps, runner="runner")
+    for registered_job in scheduler.jobs:
+        registered_job["job"]()
+
+    assert [job["id"] for job in scheduler.jobs] == [
+        "scheduler:tenant-a",
+        "scheduler:tenant-b",
+    ]
+    assert [(job["hour"], job["minute"]) for job in scheduler.jobs] == [
+        (1, 15),
+        (4, 45),
+    ]
+    assert [call["tenant_id"] for call in calls] == ["tenant-a", "tenant-b"]
+    assert [
+        call["runtime_settings"].scheduler_cron_time for call in calls
+    ] == ["01:15", "04:45"]
+    assert [call["scheduled_for"].time() for call in calls] == [
+        dt.time(1, 15),
+        dt.time(4, 45),
+    ]
+
+
+def test_registration_copies_runtime_settings_before_source_mutation(monkeypatch) -> None:
+    source_settings = _settings(
+        scheduler_cron_time="02:30",
+        batch_model_key="startup-model",
+    )
+    deps = SimpleNamespace(
+        tenant_settings_service=FakeTenantSettingsService(
+            {"tenant-a": source_settings}
+        ),
+        scheduler_run_repository=object(),
+    )
+    scheduler = RecordingScheduler()
+    now = dt.datetime(2026, 7, 23, 2, 37, tzinfo=dt.timezone.utc)
+    calls = []
+    monkeypatch.delenv("SCHEDULER_TIMEZONE", raising=False)
+    monkeypatch.setattr(app, "_scheduler_now", lambda timezone: now)
+    monkeypatch.setattr(
+        app,
+        "run_scheduled_batch_for_tenant",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    app._register_scheduler_jobs_if_available(scheduler, deps, runner="runner")
+    source_settings.scheduler_cron_time = "05:45"
+    source_settings.batch_model_key = "mutated-model"
+    scheduler.jobs[0]["job"]()
+
+    captured_settings = calls[0]["runtime_settings"]
+    assert captured_settings is not source_settings
+    assert captured_settings.scheduler_cron_time == "02:30"
+    assert captured_settings.batch_model_key == "startup-model"
+    assert calls[0]["scheduled_for"] == dt.datetime(
+        2026,
+        7,
+        23,
+        2,
+        30,
+        tzinfo=dt.timezone.utc,
+    )
+
+
+def test_interval_job_computes_current_planned_bucket(monkeypatch) -> None:
+    runtime_settings = _settings(
+        scheduler_mode="interval",
+        scheduler_interval_minutes=15,
+    )
+    deps = SimpleNamespace(
+        tenant_settings_service=FakeTenantSettingsService({"tenant-a": runtime_settings}),
+        scheduler_run_repository=object(),
+    )
+    scheduler = RecordingScheduler()
+    now = dt.datetime(2026, 7, 23, 2, 37, tzinfo=dt.timezone.utc)
+    calls = []
+    monkeypatch.delenv("SCHEDULER_TIMEZONE", raising=False)
+    monkeypatch.setattr(app, "_scheduler_now", lambda timezone: now)
+    monkeypatch.setattr(
+        app,
+        "run_scheduled_batch_for_tenant",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    app._register_scheduler_jobs_if_available(scheduler, deps, runner="runner")
+    scheduler.jobs[0]["job"]()
+
+    assert calls[0]["scheduled_for"] == dt.datetime(
+        2026,
+        7,
+        23,
+        2,
+        30,
+        tzinfo=dt.timezone.utc,
+    )
+
+
+def test_no_enabled_tenants_does_not_start_scheduler() -> None:
+    tenant_settings = FakeTenantSettingsService({})
+    scheduler = RecordingScheduler()
+
+    registered = app._register_scheduler_jobs_if_available(
+        scheduler,
+        SimpleNamespace(
+            tenant_settings_service=tenant_settings,
+            scheduler_run_repository=object(),
+        ),
+        runner=object(),
+    )
 
     assert registered is False
-    assert scheduler.started is False
+    assert scheduler.start_calls == 0
     assert scheduler.jobs == []
-    assert tenant_settings_service.list_calls == 1
+    assert tenant_settings.list_calls == 1
 
 
-def test_scheduler_registration_without_tenant_settings_service_follows_global_switch() -> None:
-    enabled_scheduler = RecordingScheduler()
-    disabled_scheduler = RecordingScheduler()
+def test_missing_run_repository_fails_closed_without_listing_or_registering() -> None:
+    tenant_settings = FakeTenantSettingsService({"tenant-a": _settings()})
+    scheduler = RecordingScheduler()
 
-    enabled = app._register_scheduler_job_if_available(
-        enabled_scheduler,
+    registered = app._register_scheduler_jobs_if_available(
+        scheduler,
         SimpleNamespace(
-            batch_params=_batch_params(scheduler_enabled=True),
-            tenant_settings_service=None,
+            tenant_settings_service=tenant_settings,
+            scheduler_run_repository=None,
         ),
-        object(),
-    )
-    disabled = app._register_scheduler_job_if_available(
-        disabled_scheduler,
-        SimpleNamespace(
-            batch_params=_batch_params(scheduler_enabled=False),
-            tenant_settings_service=None,
-        ),
-        object(),
+        runner=object(),
     )
 
-    assert enabled is True
-    assert enabled_scheduler.started is True
-    assert len(enabled_scheduler.jobs) == 1
-    assert disabled is False
-    assert disabled_scheduler.started is False
-    assert disabled_scheduler.jobs == []
+    assert registered is False
+    assert scheduler.start_calls == 0
+    assert scheduler.jobs == []
+    assert tenant_settings.list_calls == 0

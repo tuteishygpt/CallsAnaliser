@@ -84,6 +84,22 @@ create table if not exists public.analysis_results (
     )
 );
 
+create table if not exists public.scheduler_runs (
+    tenant_id text not null references public.tenants(id) on delete cascade,
+    scheduled_for timestamptz not null,
+    prompt_key text not null,
+    prompt_version integer not null,
+    model_key text not null,
+    status text not null check (status in ('running', 'success', 'partial', 'failed')),
+    total_count integer not null default 0,
+    success_count integer not null default 0,
+    failure_count integer not null default 0,
+    cached_count integer not null default 0,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz,
+    primary key (tenant_id, scheduled_for, prompt_key, prompt_version, model_key)
+);
+
 create index if not exists idx_tenant_user_access_tenant
     on public.tenant_user_access (tenant_id);
 
@@ -98,6 +114,7 @@ alter table public.tenant_settings enable row level security;
 alter table public.tenant_prompt_templates enable row level security;
 alter table public.tenant_secrets enable row level security;
 alter table public.analysis_results enable row level security;
+alter table public.scheduler_runs enable row level security;
 
 drop policy if exists "service role manages tenants" on public.tenants;
 create policy "service role manages tenants"
@@ -150,6 +167,14 @@ create policy "service role manages tenant secrets"
 drop policy if exists "service role manages analysis results" on public.analysis_results;
 create policy "service role manages analysis results"
     on public.analysis_results
+    for all
+    to service_role
+    using (true)
+    with check (true);
+
+drop policy if exists "service role manages scheduler runs" on public.scheduler_runs;
+create policy "service role manages scheduler runs"
+    on public.scheduler_runs
     for all
     to service_role
     using (true)

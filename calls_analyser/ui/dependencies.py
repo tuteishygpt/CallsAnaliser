@@ -63,6 +63,13 @@ except ImportError:  # pragma: no cover - executed when project deps unavailable
     default_telephony_provider_factory = None  # type: ignore
     TenantService = None  # type: ignore
 
+try:  # pragma: no cover - optional scheduler persistence
+    from calls_analyser.adapters.storage.supabase_scheduler_runs import (
+        SupabaseSchedulerRunRepository,
+    )
+except ImportError:  # pragma: no cover - scheduler must fail closed
+    SupabaseSchedulerRunRepository = None  # type: ignore
+
 try:
     from calls_analyser.services.auth import AuthService, InMemoryAuthRepository, hash_password
     from calls_analyser.services.tenant_admin_settings import (
@@ -112,6 +119,7 @@ class AppDependencies:
     auth_service: Any = None
     tenant_settings_service: Any = None
     tenant_admin_settings_service: Any = None
+    scheduler_run_repository: Any = None
 
 
 MODEL_PLACEHOLDER_CHOICE = (
@@ -184,6 +192,25 @@ def _build_tenant_settings_repository(
         except Exception:
             pass
     return None
+
+
+def _build_scheduler_run_repository(
+    supabase_url: str | None,
+    supabase_key: str | None,
+) -> Any:
+    """Build the run guard only from a complete, usable credential pair."""
+    if (
+        SupabaseSchedulerRunRepository is None
+        or not supabase_url
+        or not supabase_url.strip()
+        or not supabase_key
+        or not supabase_key.strip()
+    ):
+        return None
+    try:
+        return SupabaseSchedulerRunRepository(supabase_url, supabase_key)
+    except Exception:
+        return None
 
 
 def _build_tenant_service(
@@ -433,11 +460,16 @@ def build_dependencies() -> AppDependencies:
         cache = SupabaseCache(supabase_url, supabase_key)
         usage_tracker = SupabaseUsageTracker(supabase_url, supabase_key)
         usage_report_repository = SupabaseUsageReportRepository(supabase_url, supabase_key)
+        scheduler_run_repository = _build_scheduler_run_repository(
+            supabase_url,
+            supabase_key,
+        )
     else:
         cache_path = os.path.join(os.getcwd(), ".cache", "analysis_cache.json")
         cache = FileBackedCache(cache_path)
         usage_tracker = None
         usage_report_repository = None
+        scheduler_run_repository = None
 
     analysis_service = AnalysisService(
         call_log_service,
@@ -488,4 +520,5 @@ def build_dependencies() -> AppDependencies:
         auth_service=auth_service,
         tenant_settings_service=tenant_settings_service,
         tenant_admin_settings_service=tenant_admin_settings_service,
+        scheduler_run_repository=scheduler_run_repository,
     )

@@ -1,9 +1,10 @@
 """Gradio UI wired to hexagonal architecture services."""
 from __future__ import annotations
 
-import os
-import json
 import datetime
+import copy
+import os
+from typing import Any
 
 from calls_analyser.env import load_environment
 
@@ -12,6 +13,12 @@ load_environment()
 print(f"DEBUG: CWD is {os.getcwd()}")
 print(f"DEBUG: SUPABASE_URL present: {bool(os.environ.get('SUPABASE_URL'))}")
 
+from calls_analyser.services.scheduler import (
+    cron_scheduled_for,
+    interval_scheduled_for,
+    run_scheduled_batch_for_tenant,
+    scheduler_timezone,
+)
 from calls_analyser.ui import config as ui_config
 from calls_analyser.ui.dependencies import build_dependencies
 from calls_analyser.ui.handlers import UIHandlers
@@ -25,8 +32,19 @@ handlers = UIHandlers(deps)
 print("DEBUG: Checking DB connection from app.py...")
 try:
     if hasattr(deps.analysis_service._cache, "_table"):
-        count = deps.analysis_service._cache._table.select("*", count="exact", head=True).execute().count
-        print(f"DEBUG: Successfully connected to Supabase. Table 'analysis_results' has {count} rows.")
+        count = (
+            deps.analysis_service._cache._table.select(
+                "*",
+                count="exact",
+                head=True,
+            )
+            .execute()
+            .count
+        )
+        print(
+            "DEBUG: Successfully connected to Supabase. "
+            f"Table 'analysis_results' has {count} rows."
+        )
     else:
         print("DEBUG: Using local file cache (not Supabase). Check configuration.")
 except Exception as e:
@@ -66,7 +84,14 @@ def _sync_test_overrides() -> None:
     handlers.deps.batch_language = BATCH_LANGUAGE
 
 
-def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value, tenant_id, authed):
+def ui_mass_analyze(
+    date_value,
+    time_from_value,
+    time_to_value,
+    call_type_value,
+    tenant_id,
+    authed,
+):
     """Thin wrapper used in tests to run the batch pipeline."""
 
     _sync_test_overrides()
@@ -82,115 +107,134 @@ def ui_mass_analyze(date_value, time_from_value, time_to_value, call_type_value,
     )
 
 
-def _register_scheduler_job_if_available(scheduler, deps, job) -> bool:
-    """Register the background scheduler job when the current config allows it."""
+def _scheduler_now(timezone: datetime.tzinfo) -> datetime.datetime:
+    """Return an aware wall-clock value in the configured scheduler timezone."""
+    return datetime.datetime.now(timezone)
 
-    bp = deps.batch_params
-    tenant_settings_service = getattr(deps, "tenant_settings_service", None)
 
-    if tenant_settings_service is not None:
-        enabled_tenants = tenant_settings_service.list_scheduler_enabled_tenants() or []
-        if not enabled_tenants:
-            print("ℹ️  [Scheduler] No tenants opted in to scheduler. Background jobs disabled.")
-            return False
-    elif not bp.scheduler_enabled:
-        print("ℹ️  [Scheduler] Scheduler is disabled in batch_params.")
+def _register_scheduler_jobs_if_available(
+    scheduler: Any,
+    deps: Any,
+    *,
+    runner: Any,
+) -> bool:
+    """Register one guarded startup-snapshot job per enabled tenant."""
+
+    run_repository = getattr(deps, "scheduler_run_repository", None)
+    if run_repository is None:
+        print(
+            "WARNING [Scheduler] scheduler_runs repository is unavailable. "
+            "Scheduled execution disabled (fail closed)."
+        )
         return False
 
-    hour, minute = 1, 0
-    try:
-        parts = bp.scheduler_cron_time.split(":")
-        hour = int(parts[0])
-        minute = int(parts[1])
-    except Exception:
-        print("⚠️  [Scheduler] Invalid cron_time format. Using default 01:00.")
+    tenant_settings_service = getattr(deps, "tenant_settings_service", None)
+    if tenant_settings_service is None:
+        print(
+            "WARNING [Scheduler] Tenant settings service is unavailable. "
+            "Scheduled execution disabled."
+        )
+        return False
 
-    if bp.scheduler_mode == "interval":
-        interval_mins = max(1, bp.scheduler_interval_minutes)
-        print(
-            f"ℹ️  [Scheduler] Mode: INTERVAL (every {interval_mins} mins). "
-            f"Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}"
+    timezone = scheduler_timezone(os.environ.get("SCHEDULER_TIMEZONE"))
+    enabled_tenants = tenant_settings_service.list_scheduler_enabled_tenants() or []
+    if not enabled_tenants:
+        print("[Scheduler] No tenants opted in. Background jobs disabled.")
+        return False
+
+    for tenant_id in enabled_tenants:
+        runtime_settings = copy.deepcopy(
+            tenant_settings_service.resolve(tenant_id)
         )
+        mode = runtime_settings.scheduler_mode
+
+        if mode == "interval":
+            interval_minutes = runtime_settings.scheduler_interval_minutes
+
+            def run_interval_job(
+                *,
+                _tenant_id=tenant_id,
+                _runtime_settings=runtime_settings,
+                _interval_minutes=interval_minutes,
+            ):
+                now = _scheduler_now(timezone)
+                return run_scheduled_batch_for_tenant(
+                    tenant_id=_tenant_id,
+                    runtime_settings=_runtime_settings,
+                    scheduled_for=interval_scheduled_for(now, _interval_minutes),
+                    now=now,
+                    run_repository=run_repository,
+                    runner=runner,
+                    deps=deps,
+                )
+
+            scheduler.add_job(
+                run_interval_job,
+                "interval",
+                minutes=interval_minutes,
+                timezone=timezone,
+                id=f"scheduler:{tenant_id}",
+                replace_existing=True,
+                max_instances=1,
+            )
+            continue
+
+        cron_time = datetime.time.fromisoformat(runtime_settings.scheduler_cron_time)
+        cron_time = cron_time.replace(second=0, microsecond=0, tzinfo=None)
+
+        def run_cron_job(
+            *,
+            _tenant_id=tenant_id,
+            _runtime_settings=runtime_settings,
+            _cron_time=cron_time,
+        ):
+            now = _scheduler_now(timezone)
+            return run_scheduled_batch_for_tenant(
+                tenant_id=_tenant_id,
+                runtime_settings=_runtime_settings,
+                scheduled_for=cron_scheduled_for(now, _cron_time),
+                now=now,
+                run_repository=run_repository,
+                runner=runner,
+                deps=deps,
+            )
+
         scheduler.add_job(
-            job,
-            "interval",
-            minutes=interval_mins,
-            next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=10),
+            run_cron_job,
+            "cron",
+            hour=cron_time.hour,
+            minute=cron_time.minute,
+            timezone=timezone,
+            id=f"scheduler:{tenant_id}",
+            replace_existing=True,
+            max_instances=1,
         )
-    else:
-        print(
-            f"ℹ️  [Scheduler] Mode: CRON (at {hour:02d}:{minute:02d}). "
-            f"Filters: {bp.filter_time_from}-{bp.filter_time_to}, Type: {bp.filter_call_type}"
-        )
-        scheduler.add_job(job, "cron", hour=hour, minute=minute)
 
     scheduler.start()
-    print("ℹ️  [Scheduler] Background scheduler started.")
+    print(f"[Scheduler] Started {len(enabled_tenants)} guarded tenant job(s).")
     return True
 
 
-# ----------------------------------------------------------------------------
-# Scheduler for automated daily batch (runs on Hugging Face Spaces / Servers)
-# ----------------------------------------------------------------------------
+# Scheduler for automated daily batch (runs on Hugging Face Spaces / servers).
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     from calls_analyser import runner as daily_runner
-    from calls_analyser.services.scheduler import run_scheduled_batches_for_enabled_tenants
-
-    def run_scheduled_job():
-        """Wrapper to run the batch job for 'yesterday'."""
-        print("⏰ [Scheduler] Starting daily batch analysis...")
-        target_date = datetime.date.today() - datetime.timedelta(days=1)
-
-        tenant_settings_service = getattr(deps, "tenant_settings_service", None)
-        if tenant_settings_service is not None:
-            try:
-                summary = run_scheduled_batches_for_enabled_tenants(
-                    tenant_settings_service=tenant_settings_service,
-                    runner=daily_runner.run_batch_process,
-                    deps=deps,
-                    day=target_date,
-                )
-            except Exception as e:
-                print(f"WARNING [Scheduler] Multi-tenant scheduled batch failed: {e}")
-                raise
-
-            print(
-                "[Scheduler] Multi-tenant daily batch finished. "
-                f"Successes: {len(summary.successes)}, failures: {len(summary.failures)}."
-            )
-            for failure in summary.failures:
-                print(
-                    "WARNING [Scheduler] Tenant batch failed "
-                    f"tenant_id={failure.tenant_id} "
-                    f"error_type={failure.exception_type}: {failure.error}"
-                )
-            return summary
-
-        bp = deps.batch_params
-        daily_runner.run_batch_process(
-            deps,
-            day=target_date,
-            time_from_str=bp.filter_time_from,
-            time_to_str=bp.filter_time_to,
-            call_type_str=bp.filter_call_type,
-            tenant_id_arg=None,
-        )
-        print("✅ [Scheduler] Daily batch finished.")
 
     scheduler = BackgroundScheduler()
-    _register_scheduler_job_if_available(scheduler, deps, run_scheduled_job)
-
+    _register_scheduler_jobs_if_available(
+        scheduler,
+        deps,
+        runner=daily_runner.run_batch_process,
+    )
 except ImportError as e:
-    print(f"⚠️  [Scheduler] Import Error details: {e}")
-    print("⚠️  [Scheduler] APScheduler not installed or import failed. Background jobs disabled.")
+    print(f"WARNING [Scheduler] Import error: {e}")
+    print("WARNING [Scheduler] APScheduler unavailable. Background jobs disabled.")
 except Exception as e:
-    print(f"⚠️  [Scheduler] Failed to start scheduler: {e}")
+    print(f"WARNING [Scheduler] Failed to start scheduler: {e}")
 
 
 if __name__ == "__main__":
     demo.launch(
-    allowed_paths=[os.environ.get("VOCHI_ALLOWED_PATH", "D:\\tmp")],
-    ssr_mode=False,  # адключаем SSR
-)
-
+        allowed_paths=[os.environ.get("VOCHI_ALLOWED_PATH", r"D:\tmp")],
+        ssr_mode=False,
+    )

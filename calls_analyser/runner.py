@@ -4,10 +4,10 @@ Defaults to processing "yesterday's" calls.
 """
 import argparse
 import datetime
-import json
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from typing import Any, List, Optional
 from dotenv import load_dotenv
 import pandas as pd
@@ -22,7 +22,13 @@ try:
     from calls_analyser.ui.dependencies import build_dependencies
     from calls_analyser.ui import utils
     from calls_analyser.services.gemini_batch import VertexBatchRunner, BatchTask, guess_mime_type
-    from calls_analyser.services.batch_results import build_error_row, build_success_row
+    from calls_analyser.services.batch_results import (
+        BatchRunResult,
+        FollowUpResult,
+        build_error_row,
+        build_success_row,
+        parse_follow_up_result,
+    )
     from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
     from calls_analyser.domain.models import AnalysisResult, Language
     from calls_analyser.services.analysis import CacheKey
@@ -201,119 +207,184 @@ def _resolve_batch_prompt_text_and_version(deps: Any, tenant: Any) -> tuple[str,
     return fallback_text, prompt_version
 
 
+@dataclass(frozen=True)
+class BatchExecutionContext:
+    """One immutable identity and input snapshot for a complete batch run."""
+
+    tenant: Any
+    prompt_key: str
+    batch_model_key: str
+    provider_name: str
+    batch_size: int
+    batch_language: Any
+    merged_prompt: str
+    prompt_version: int
+    time_from: Any
+    time_to: Any
+    call_type: Any
+
+
+def resolve_batch_execution_context(
+    deps: Any,
+    *,
+    tenant_id: str | None = None,
+    time_from_str: object = None,
+    time_to_str: object = None,
+    call_type_str: object = "",
+    tenant: Any | None = None,
+    runtime_settings: Any | None = None,
+) -> BatchExecutionContext:
+    """Resolve scheduler/cache identity and all matching execution inputs once."""
+    resolved_tenant = tenant or deps.tenant_service.resolve(tenant_id or None)
+    resolved_settings = (
+        runtime_settings
+        if runtime_settings is not None
+        else _resolve_runtime_settings(deps, resolved_tenant)
+    )
+    batch_model_key = _runtime_str_or_default(
+        getattr(resolved_settings, "batch_model_key", None),
+        deps.batch_model_key,
+    )
+    provider = deps.ai_registry.get(batch_model_key)
+    if not provider:
+        raise ValueError(f"Model {batch_model_key} not found in registry.")
+
+    batch_language = _runtime_language_or_default(
+        resolved_settings,
+        deps.batch_language,
+    )
+    prompt_text, prompt_version = _resolve_batch_prompt_text_and_version(
+        deps,
+        resolved_tenant,
+    )
+    lang_instruction = GeminiAIAdapter._system_instruction(batch_language)
+    merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
+
+    time_from_value = _runtime_filter_or_arg(
+        resolved_settings,
+        "time_from",
+        time_from_str,
+    )
+    time_to_value = _runtime_filter_or_arg(
+        resolved_settings,
+        "time_to",
+        time_to_str,
+    )
+    call_type_value = _runtime_filter_or_arg(
+        resolved_settings,
+        "call_type",
+        call_type_str,
+    )
+    time_from = utils.parse_time_value(time_from_value)
+    time_to = utils.parse_time_value(time_to_value)
+    utils.validate_time_range(time_from, time_to)
+    call_type = utils.resolve_call_type(call_type_value)
+
+    return BatchExecutionContext(
+        tenant=resolved_tenant,
+        prompt_key=str(deps.batch_prompt_key),
+        batch_model_key=batch_model_key,
+        provider_name=str(getattr(provider, "provider_name", batch_model_key)),
+        batch_size=_runtime_int_or_default(
+            getattr(resolved_settings, "batch_size", None),
+            deps.batch_params.batch_size,
+        ),
+        batch_language=batch_language,
+        merged_prompt=merged_prompt,
+        prompt_version=int(prompt_version),
+        time_from=time_from,
+        time_to=time_to,
+        call_type=call_type,
+    )
+
+
 def run_batch_process(
-    deps, 
+    deps: Any,
     day: datetime.date,
     time_from_str: Optional[str],
     time_to_str: Optional[str],
     call_type_str: str,
-    tenant_id_arg: Optional[str]
-):
+    tenant_id_arg: Optional[str],
+    *,
+    execution_context: BatchExecutionContext | None = None,
+) -> BatchRunResult:
+    """Run one batch with strict validation and per-item failure isolation."""
+    failed_empty = BatchRunResult("failed", 0, 0, 0, 0)
     if not deps.project_imports_available:
         logger.error("Project imports not available.")
-        return
+        return failed_empty
 
-    if (
-        getattr(deps, "tenant_settings_service", None) is None
-        and not deps.batch_params.enable_gemini_batch
-    ):
-        logger.warning("Gemini batch is disabled in batch_params.json (enable_gemini_batch=False).")
-        return
-
-    # Resolve tenant
-    tenant = deps.tenant_service.resolve(tenant_id_arg or None)
-    runtime_settings = _resolve_runtime_settings(deps, tenant)
-
-    batch_enabled = (
-        bool(getattr(runtime_settings, "batch_enabled", True))
-        if runtime_settings is not None
-        else deps.batch_params.enable_gemini_batch
-    )
-    if not batch_enabled:
-        logger.warning("Gemini batch is disabled for tenant %s.", tenant.tenant_id)
-        return
-
-    batch_model_key = _runtime_str_or_default(
-        getattr(runtime_settings, "batch_model_key", None),
-        deps.batch_model_key,
-    )
-    batch_size = _runtime_int_or_default(
-        getattr(runtime_settings, "batch_size", None),
-        deps.batch_params.batch_size,
-    )
-    batch_language = _runtime_language_or_default(runtime_settings, deps.batch_language)
-    time_from_value = _runtime_filter_or_arg(runtime_settings, "time_from", time_from_str)
-    time_to_value = _runtime_filter_or_arg(runtime_settings, "time_to", time_to_str)
-    call_type_value = _runtime_filter_or_arg(runtime_settings, "call_type", call_type_str)
-
-    # Parse and validate filters
-    try:
-        time_from = utils.parse_time_value(time_from_value)
-        time_to = utils.parse_time_value(time_to_value)
-        utils.validate_time_range(time_from, time_to)
-        call_type = utils.resolve_call_type(call_type_value)
-    except ValueError as e:
-        logger.error(f"Invalid filter parameters: {e}")
-        return
-
-    # Fetch calls 
-    logger.info(
-        "Fetching calls for %s (Time: %s - %s, Type: %s)...",
-        day,
-        _display_filter_value(time_from_value),
-        _display_filter_value(time_to_value),
-        _display_filter_value(call_type_value),
-    )
-    
-    try:
-        entries = deps.call_log_service.list_calls(
-            day,
-            tenant,
-            time_from=time_from,
-            time_to=time_to,
-            call_type=call_type
+    if execution_context is None:
+        if (
+            getattr(deps, "tenant_settings_service", None) is None
+            and not deps.batch_params.enable_gemini_batch
+        ):
+            logger.warning("Gemini batch is disabled.")
+            return failed_empty
+        try:
+            tenant = deps.tenant_service.resolve(tenant_id_arg or None)
+            runtime_settings = _resolve_runtime_settings(deps, tenant)
+        except Exception as exc:
+            logger.error("Failed to resolve tenant batch settings: %s", exc)
+            return failed_empty
+        batch_enabled = (
+            bool(getattr(runtime_settings, "batch_enabled", True))
+            if runtime_settings is not None
+            else deps.batch_params.enable_gemini_batch
         )
-    except Exception as e:
-        logger.error(f"Error fetching calls: {e}")
-        return
+        if not batch_enabled:
+            logger.warning("Gemini batch is disabled for tenant %s.", tenant.tenant_id)
+            return failed_empty
+        try:
+            execution_context = resolve_batch_execution_context(
+                deps,
+                tenant=tenant,
+                runtime_settings=runtime_settings,
+                time_from_str=time_from_str,
+                time_to_str=time_to_str,
+                call_type_str=call_type_str,
+            )
+        except Exception as exc:
+            logger.error("Invalid batch execution context: %s", exc)
+            return failed_empty
 
+    context = execution_context
+    tenant = context.tenant
+    try:
+        entries = list(
+            deps.call_log_service.list_calls(
+                day,
+                tenant,
+                time_from=context.time_from,
+                time_to=context.time_to,
+                call_type=context.call_type,
+            )
+        )
+    except Exception as exc:
+        logger.error("Error fetching calls: %s", exc)
+        return failed_empty
     if not entries:
         logger.info("No calls found for this filter.")
-        return
+        return BatchRunResult.from_counts(
+            total_count=0,
+            success_count=0,
+            failure_count=0,
+        )
 
-    logger.info(f"Found {len(entries)} calls.")
-
-    # Build prompt
-    lang_instruction = GeminiAIAdapter._system_instruction(batch_language)
-    prompt_text, prompt_version = _resolve_batch_prompt_text_and_version(deps, tenant)
-    merged_prompt = f"[SYSTEM INSTRUCTION: {lang_instruction}]\n\n{prompt_text}".strip()
-    
-    provider = deps.ai_registry.get(batch_model_key)
-    if not provider:
-        logger.error(f"Model {batch_model_key} not found in registry.")
-        return
-
-    provider_name = getattr(provider, "provider_name", batch_model_key)
-    custom_fragment = "" 
-
-    tasks: List[BatchTask] = []
-    task_indices: List[int] = []
-    result_text_by_id: dict[str, str] = {}
-    error_by_id: dict[str, str] = {}
-
+    custom_fragment = ""
     cache_entries: list[tuple[int, object, CacheKey]] = []
-    for idx, entry in enumerate(entries):
+    for index, entry in enumerate(entries):
         cache_entries.append(
             (
-                idx,
+                index,
                 entry,
                 (
                     tenant.tenant_id,
                     entry.unique_id,
-                    deps.batch_prompt_key,
-                    prompt_version,
-                    provider_name,
-                    batch_model_key,
+                    context.prompt_key,
+                    context.prompt_version,
+                    context.provider_name,
+                    context.batch_model_key,
                     custom_fragment,
                 ),
             )
@@ -322,47 +393,52 @@ def run_batch_process(
         deps.analysis_service._cache,
         [cache_key for _, _, cache_key in cache_entries],
     )
+    cache_key_by_id = {
+        entry.unique_id: cache_key for _, entry, cache_key in cache_entries
+    }
 
-    # Check cache and identify missing
+    tasks: list[BatchTask] = []
+    task_indices: list[int] = []
+    parsed_result_by_id: dict[str, FollowUpResult] = {}
+    error_by_id: dict[str, str] = {}
     cached_count = 0
-    for idx, entry, cache_key in cache_entries:
+    for index, entry, cache_key in cache_entries:
         cached_result = cached_results.get(cache_key)
-
         if cached_result:
             cached_count += 1
-            result_text_by_id[entry.unique_id] = cached_result.text
-        else:
             try:
-                handle = deps.call_log_service.ensure_recording(entry.unique_id, tenant)
-                mime_type = guess_mime_type(handle.local_uri)
-                tasks.append(
-                    BatchTask(
-                        key=entry.unique_id,
-                        path=handle.local_uri,
-                        mime_type=mime_type,
-                    )
+                parsed_result_by_id[entry.unique_id] = parse_follow_up_result(
+                    cached_result.text
                 )
-                task_indices.append(idx)
-            except Exception as e:
-                logger.error(f"Failed to prepare audio for {entry.unique_id}: {e}")
-                error_by_id[entry.unique_id] = f"❌ {e}"
-
-    logger.info(f"Summary: {len(entries)} total. {cached_count} already cached. {len(tasks)} to process.")
+            except Exception as exc:
+                logger.error("Invalid cached result for %s: %s", entry.unique_id, exc)
+                error_by_id[entry.unique_id] = f"Invalid cached result: {exc}"
+            continue
+        try:
+            handle = deps.call_log_service.ensure_recording(entry.unique_id, tenant)
+            tasks.append(
+                BatchTask(
+                    key=entry.unique_id,
+                    path=handle.local_uri,
+                    mime_type=guess_mime_type(handle.local_uri),
+                )
+            )
+            task_indices.append(index)
+        except Exception as exc:
+            logger.error("Failed to prepare audio for %s: %s", entry.unique_id, exc)
+            error_by_id[entry.unique_id] = str(exc)
 
     result_map: dict[str, str] = {}
     usage_by_id: dict[str, object] = {}
     if tasks:
-        # Run batch via Vertex AI Batch API
-        logger.info(f"Starting Vertex AI Batch for {len(tasks)} items...")
-        runner = VertexBatchRunner(model=batch_model_key)
-
         try:
-            run_batch_results = getattr(runner, "run_batch_results", None)
+            batch_runner = VertexBatchRunner(model=context.batch_model_key)
+            run_batch_results = getattr(batch_runner, "run_batch_results", None)
             if callable(run_batch_results):
                 batch_results = run_batch_results(
                     tasks,
-                    merged_prompt,
-                    chunk_size=batch_size,
+                    context.merged_prompt,
+                    chunk_size=context.batch_size,
                 )
                 result_map = {
                     key: getattr(value, "text", str(value))
@@ -373,103 +449,101 @@ def run_batch_process(
                     for key, value in batch_results.items()
                 }
             else:
-                result_map = runner.run_batch(
+                result_map = batch_runner.run_batch(
                     tasks,
-                    merged_prompt,
-                    chunk_size=batch_size,
+                    context.merged_prompt,
+                    chunk_size=context.batch_size,
                 )
-        except Exception as e:
-            logger.error(f"Batch execution failed: {e}")
+        except Exception as exc:
+            logger.error("Batch execution failed: %s", exc)
             for task in tasks:
-                error_by_id[task.key] = f"❌ Batch execution failed: {e}"
-    else:
-        logger.info("Nothing new to process; preparing report from cached results.")
+                error_by_id[task.key] = f"Batch execution failed: {exc}"
 
-    # Process results and save to cache
-    success_count = 0
-    for i, task in enumerate(tasks):
-        original_idx = task_indices[i]
-        entry = entries[original_idx]
+    for task_index, task in enumerate(tasks):
+        entry = entries[task_indices[task_index]]
         text_result = result_map.get(entry.unique_id)
+        if not isinstance(text_result, str) or not text_result:
+            error_by_id[entry.unique_id] = "No valid text result returned."
+            continue
+        if text_result.startswith("Error:"):
+            error_by_id[entry.unique_id] = text_result or "No result returned."
+            continue
+        try:
+            parsed_result = parse_follow_up_result(text_result)
+        except Exception as exc:
+            logger.error("Invalid model result for %s: %s", entry.unique_id, exc)
+            error_by_id[entry.unique_id] = f"Invalid model result: {exc}"
+            continue
 
-        if text_result and not text_result.startswith("Error:"):
-            # Save to cache
-            cache_key = (
-                tenant.tenant_id,
-                entry.unique_id,
-                deps.batch_prompt_key,
-                prompt_version,
-                provider_name,
-                batch_model_key,
-                custom_fragment,
-            )
-            usage_metadata = usage_by_id.get(entry.unique_id)
-            new_result = AnalysisResult(
-                text=text_result,
-                model=batch_model_key,
-                provider=provider_name,
-                metadata={
-                    "batch": True,
-                    **({"usage_metadata": usage_metadata} if usage_metadata else {}),
-                },
-            )
+        cache_key = cache_key_by_id[entry.unique_id]
+        usage_metadata = usage_by_id.get(entry.unique_id)
+        new_result = AnalysisResult(
+            text=text_result,
+            model=context.batch_model_key,
+            provider=context.provider_name,
+            metadata={
+                "batch": True,
+                **({"usage_metadata": usage_metadata} if usage_metadata else {}),
+            },
+        )
+        try:
             deps.analysis_service._cache[cache_key] = new_result
-            usage_tracker = getattr(deps, "usage_tracker", None)
-            if usage_tracker is not None:
+        except Exception as exc:
+            logger.error("Cache write failed for %s: %s", entry.unique_id, exc)
+            error_by_id[entry.unique_id] = f"Cache write failed: {exc}"
+            continue
+
+        usage_tracker = getattr(deps, "usage_tracker", None)
+        if usage_tracker is not None:
+            try:
                 usage = extract_usage_metadata(usage_metadata)
                 if usage is not None:
                     usage_tracker.record(
                         entry=entry,
                         tenant=tenant,
-                        prompt_key=deps.batch_prompt_key,
+                        prompt_key=context.prompt_key,
                         custom_fragment=custom_fragment,
-                        provider_name=provider_name,
-                        model_key=batch_model_key,
+                        provider_name=context.provider_name,
+                        model_key=context.batch_model_key,
                         mode="scheduler_batch",
                         usage=usage,
                         cache_key=cache_key,
                     )
-            result_text_by_id[entry.unique_id] = text_result
-            success_count += 1
-            logger.info(f"Processed {entry.unique_id} successfully.")
-        else:
-            logger.error(f"Failed or error for {entry.unique_id}: {text_result}")
-            error_by_id[entry.unique_id] = text_result or "No result returned."
+            except Exception as exc:
+                logger.error("Usage write failed for %s: %s", entry.unique_id, exc)
+        parsed_result_by_id[entry.unique_id] = parsed_result
 
-    logger.info(f"Batch completed. Successfully processed and cached: {success_count}/{len(tasks)}")
-
-    rows = []
-    for entry in entries:
-        if entry.unique_id in result_text_by_id:
-            rows.append(build_success_row(entry, tenant, result_text_by_id[entry.unique_id]))
-        else:
-            rows.append(
-                build_error_row(
-                    entry,
-                    error_by_id.get(entry.unique_id, "No result returned."),
-                )
+    rows = [
+        (
+            build_success_row(entry, tenant, parsed_result_by_id[entry.unique_id])
+            if entry.unique_id in parsed_result_by_id
+            else build_error_row(
+                entry,
+                error_by_id.get(entry.unique_id, "No result returned."),
             )
+        )
+        for entry in entries
+    ]
     results_df = pd.DataFrame(rows)
-
     email_report_service = getattr(deps, "email_report_service", None)
-    if email_report_service is not None:
-        if not result_text_by_id:
-            logger.warning("Email report skipped: no successful batch results to send.")
-        else:
-            try:
-                email_report_service.send(
-                    results_df,
-                    filter_option="Needs follow-up",
-                    report_date=day.isoformat(),
-                    tenant_id=tenant.tenant_id,
-                )
-                logger.info("Email report sent successfully.")
-            except Exception as e:
-                logger.error(f"Email report failed: {e}")
-    else:
-        logger.warning("Email report skipped: BREVO_API_KEY or GOOGLE_app is not configured.")
+    if email_report_service is not None and parsed_result_by_id:
+        try:
+            email_report_service.send(
+                results_df,
+                filter_option="Needs follow-up",
+                report_date=day.isoformat(),
+                tenant_id=tenant.tenant_id,
+            )
+        except Exception as exc:
+            logger.error("Email report failed: %s", exc)
 
-    return results_df
+    success_count = len(parsed_result_by_id)
+    return BatchRunResult.from_counts(
+        total_count=len(entries),
+        success_count=success_count,
+        failure_count=len(entries) - success_count,
+        cached_count=cached_count,
+    )
 
 
 def main():
