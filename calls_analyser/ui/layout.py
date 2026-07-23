@@ -463,6 +463,9 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         )
 
         batch_btn.click(
+            fn=handlers.hide_batch_filter,
+            outputs=[batch_filter_row],
+        ).then(
             fn=handlers.mass_analyze,
             inputs=[
                 date_inp,
@@ -478,12 +481,15 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 batch_results_state,
                 batch_status_md,
                 batch_file,
-                batch_filter_row,
             ],
         ).then(
             fn=handlers.filter_batch_results,
             inputs=[filter_radio, batch_results_state],
             outputs=[batch_results_df],
+        ).then(
+            fn=handlers.update_batch_filter_visibility,
+            inputs=[batch_results_state],
+            outputs=[batch_filter_row],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
@@ -509,6 +515,9 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
             inputs=[batch_custom_prompt_tb],
             outputs=[custom_batch_conditions_state, custom_prompt_modal],
         ).then(
+            fn=handlers.hide_batch_filter,
+            outputs=[batch_filter_row],
+        ).then(
             fn=handlers.mass_analyze_custom,
             inputs=[
                 custom_batch_conditions_state,
@@ -525,8 +534,15 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 batch_results_state,
                 batch_status_md,
                 batch_file,
-                batch_filter_row,
             ],
+        ).then(
+            fn=handlers.filter_batch_results,
+            inputs=[filter_radio, batch_results_state],
+            outputs=[batch_results_df],
+        ).then(
+            fn=handlers.update_batch_filter_visibility,
+            inputs=[batch_results_state],
+            outputs=[batch_filter_row],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],

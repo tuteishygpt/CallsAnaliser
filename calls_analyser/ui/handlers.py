@@ -1070,8 +1070,6 @@ class UIHandlers:
         hidden_df_update = gr.update(value=empty_df, visible=False)
         empty_state = pd.DataFrame()
         hidden_file = gr.update(value=None, visible=False)
-        hidden_filter = gr.update(visible=False)
-        visible_filter = gr.update(visible=True)
 
         def h3(txt: str) -> str:
             return f"### {txt}"
@@ -1088,7 +1086,6 @@ class UIHandlers:
                 empty_state,
                 h2_error("🔐 Enter the password to run batch analysis."),
                 hidden_file,
-                hidden_filter,
             )
             return
 
@@ -1103,7 +1100,6 @@ class UIHandlers:
                 empty_state,
                 h2_error(denial),
                 hidden_file,
-                hidden_filter,
             )
             return
 
@@ -1113,7 +1109,6 @@ class UIHandlers:
                 empty_state,
                 h2_error("Project dependencies are not loaded."),
                 hidden_file,
-                hidden_filter,
             )
             return
 
@@ -1141,7 +1136,6 @@ class UIHandlers:
                         f"❌ Configured batch model '{effective_model_key}' is not available."
                     ),
                     hidden_file,
-                    hidden_filter,
                 )
                 return
 
@@ -1159,7 +1153,6 @@ class UIHandlers:
                     empty_state,
                     h3("ℹ️ No calls for the selected filter."),
                     hidden_file,
-                    hidden_filter,
                 )
                 return
 
@@ -1174,7 +1167,6 @@ class UIHandlers:
                 empty_state,
                 h3(f"Starting batch analysis for {total} call(s)..."),
                 hidden_file,
-                hidden_filter,
             )
 
             # UI always uses sequential mode (one-by-one generate_content).
@@ -1222,7 +1214,6 @@ class UIHandlers:
                     partial_df,
                     h3(interim_msg),
                     hidden_file,
-                    hidden_filter,
                 )
 
             final_df = pd.DataFrame(rows)
@@ -1237,7 +1228,6 @@ class UIHandlers:
                 final_df,
                 h2_success(final_msg),
                 hidden_file,
-                visible_filter,
             )
 
         except Exception as exc:
@@ -1246,9 +1236,17 @@ class UIHandlers:
                 empty_state,
                 h2_error(f"❌ Analysis failed: {exc}"),
                 hidden_file,
-                hidden_filter,
             )
             return
+
+    @staticmethod
+    def hide_batch_filter():
+        return gr.update(visible=False)
+
+    @staticmethod
+    def update_batch_filter_visibility(full_df: pd.DataFrame | None):
+        """Show the filter only after a completed batch produced results."""
+        return gr.update(visible=full_df is not None and not full_df.empty)
 
     @staticmethod
     def hide_call_list():
