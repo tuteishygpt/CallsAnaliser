@@ -56,6 +56,15 @@ create index if not exists idx_analysis_usage_tenant_created
 create index if not exists idx_analysis_usage_call
     on public.analysis_usage (tenant_id, call_unique_id);
 
+create index if not exists idx_analysis_usage_created
+    on public.analysis_usage (created_at desc);
+
+create index if not exists idx_analysis_usage_model_mode_created
+    on public.analysis_usage (model_key, mode, created_at desc);
+
+create index if not exists idx_analysis_usage_user_created
+    on public.analysis_usage (call_user, created_at desc);
+
 alter table public.model_pricing enable row level security;
 alter table public.analysis_usage enable row level security;
 

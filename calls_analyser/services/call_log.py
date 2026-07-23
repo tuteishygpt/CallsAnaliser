@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, time, datetime
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from calls_analyser.domain.models import CallLogEntry, RecordingHandle
 from calls_analyser.ports.storage import StoragePort
@@ -13,9 +13,19 @@ from calls_analyser.services.tenant import TenantConfig
 class CallLogService:
     """Provides call log operations for a tenant."""
 
-    def __init__(self, telephony: TelephonyPort, storage: StoragePort) -> None:
+    def __init__(
+        self,
+        telephony: TelephonyPort | Callable[[TenantConfig], TelephonyPort],
+        storage: StoragePort,
+    ) -> None:
         self._telephony = telephony
         self._storage = storage
+        self._recording_urls: dict[tuple[str, str], str] = {}
+
+    def _telephony_for(self, tenant: TenantConfig) -> TelephonyPort:
+        if callable(self._telephony):
+            return self._telephony(tenant)
+        return self._telephony
 
     def list_calls(
         self,
@@ -26,8 +36,9 @@ class CallLogService:
         call_type: Optional[int] = None,
     ) -> List[CallLogEntry]:
         """Return call log entries for ``day`` with optional filters."""
+        telephony = self._telephony_for(tenant)
         entries = list(
-            self._telephony.list_calls(
+            telephony.list_calls(
                 day=day,
                 tenant_id=tenant.tenant_id,
                 time_from=time_from,
@@ -114,16 +125,41 @@ class CallLogService:
                     return mapping[s.lower()] == call_type
             return True  # if unknown, do not exclude
 
-        return [e for e in entries if within_time_window(e) and matches_type(e)]
+        filtered_entries = [e for e in entries if within_time_window(e) and matches_type(e)]
+        for entry in filtered_entries:
+            recording_url = self._recording_url_from_entry(entry)
+            if recording_url:
+                self._recording_urls[(tenant.tenant_id, entry.unique_id)] = recording_url
+        return filtered_entries
 
-    def ensure_recording(self, unique_id: str, tenant: TenantConfig) -> RecordingHandle:
+    @staticmethod
+    def _recording_url_from_entry(entry: CallLogEntry) -> str:
+        raw = entry.raw or {}
+        for key in ("record", "recording_url", "download_url"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def ensure_recording(
+        self,
+        unique_id: str,
+        tenant: TenantConfig,
+        recording_url: str | None = None,
+    ) -> RecordingHandle:
         """Return a handle to a locally stored recording."""
 
-        file_name = f"{tenant.tenant_id}_{unique_id}.mp3"
+        file_name = f"{tenant.tenant_id}/{unique_id}.mp3"
         uri = self._storage.uri_for(file_name)
-        remote_uri = tenant.recording_url(unique_id)
+        stored_recording_url = self._recording_urls.get((tenant.tenant_id, unique_id))
+        effective_recording_url = recording_url or stored_recording_url
+        remote_uri = effective_recording_url or tenant.recording_url(unique_id)
         if not self._storage.exists(uri):
-            recording = self._telephony.get_recording(unique_id=unique_id, tenant_id=tenant.tenant_id)
+            telephony = self._telephony_for(tenant)
+            register_record_url = getattr(telephony, "register_record_url", None)
+            if effective_recording_url and callable(register_record_url):
+                register_record_url(unique_id, effective_recording_url)
+            recording = telephony.get_recording(unique_id=unique_id, tenant_id=tenant.tenant_id)
             uri = self._storage.save_file(recording.content, file_name)
             remote_uri = recording.source_uri or remote_uri
         return RecordingHandle(unique_id=unique_id, local_uri=uri, source_uri=remote_uri)

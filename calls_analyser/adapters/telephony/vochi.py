@@ -35,6 +35,15 @@ class VochiTelephonyAdapter(TelephonyPort):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._http = _HTTPClient(http_client)
+        self._record_urls: dict[str, str] = {}
+
+    def register_record_url(self, unique_id: str, url: str) -> None:
+        """Remember a provider-supplied direct recording URL for a call."""
+
+        clean_unique_id = str(unique_id or "").strip()
+        clean_url = str(url or "").strip()
+        if clean_unique_id and clean_url:
+            self._record_urls[clean_unique_id] = clean_url
 
     @staticmethod
     def _headers() -> dict[str, str]:
@@ -149,6 +158,32 @@ class VochiTelephonyAdapter(TelephonyPort):
 
     def get_recording(self, unique_id: str, tenant_id: str) -> Recording:
         del tenant_id
+
+        registered_url = self._record_urls.get(unique_id)
+        if registered_url:
+            try:
+                recording_response = self._http.get(
+                    registered_url,
+                    headers={"Accept": "audio/*"},
+                    timeout=120,
+                )
+                recording_response.raise_for_status()
+            except requests.RequestException as exc:
+                raise TelephonyError(
+                    f"Failed to download VoChi recording {unique_id}"
+                ) from exc
+
+            content_type = (
+                str(recording_response.headers.get("Content-Type") or "audio/mpeg")
+                .split(";", 1)[0]
+                .strip()
+            )
+            return Recording(
+                unique_id=unique_id,
+                content=recording_response.content,
+                content_type=content_type,
+                source_uri=registered_url,
+            )
 
         metadata_url = f"{self._base_url}/recording"
         try:

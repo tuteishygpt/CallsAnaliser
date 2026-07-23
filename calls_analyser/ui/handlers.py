@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import parse_qs, unquote, urlparse
 
 import gradio as gr
 import pandas as pd
@@ -16,6 +18,12 @@ from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
 from calls_analyser.domain.models import AnalysisResult
 from calls_analyser.services.gemini_batch import BatchTask, VertexBatchRunner, guess_mime_type
+from calls_analyser.services.tenant_admin_settings import TenantAdminValidationError
+from calls_analyser.services.usage_report import (
+    ALL_VALUE,
+    UsageReportFilters,
+    build_usage_report,
+)
 
 
 class UIHandlers:
@@ -25,6 +33,45 @@ class UIHandlers:
     # ----------------------------------------------------------------------------
     # Internal helpers
     # ----------------------------------------------------------------------------
+    def _resolve_tenant_batch_runtime(self, tenant) -> tuple[str, config.Language]:
+        runtime_settings = None
+        tenant_settings_service = getattr(self.deps, "tenant_settings_service", None)
+        resolve_settings = getattr(tenant_settings_service, "resolve", None)
+        if callable(resolve_settings):
+            try:
+                runtime_settings = resolve_settings(tenant.tenant_id)
+            except Exception:
+                runtime_settings = None
+
+        return (
+            self._resolve_batch_model_key(runtime_settings),
+            self._resolve_batch_language(runtime_settings),
+        )
+
+    def _resolve_batch_model_key(self, runtime_settings) -> str:
+        tenant_model_key = getattr(runtime_settings, "batch_model_key", None)
+        if isinstance(tenant_model_key, str) and tenant_model_key.strip():
+            return tenant_model_key.strip()
+        return self.deps.batch_model_key
+
+    def _resolve_batch_language(self, runtime_settings) -> config.Language:
+        tenant_language_code = getattr(
+            runtime_settings, "batch_language_code", None
+        )
+        normalized_language_code = (
+            tenant_language_code.strip().lower()
+            if isinstance(tenant_language_code, str)
+            else ""
+        )
+        if normalized_language_code in {"auto", "default"}:
+            return config.Language.AUTO
+        if normalized_language_code:
+            try:
+                return config.Language(normalized_language_code)
+            except ValueError:
+                pass
+        return self.deps.batch_language
+
     @staticmethod
     def _parse_follow_up_fields(text: str) -> tuple[str, str]:
         text_clean = str(text or "").strip()
@@ -69,6 +116,41 @@ class UIHandlers:
             "UniqueId": entry.unique_id,
             **({"user": user} if user not in (None, "") else {}),
         }
+
+    @staticmethod
+    def _uid_from_row(row) -> str:
+        raw = row.to_dict() if hasattr(row, "to_dict") else dict(row or {})
+        for key in ("UniqueId", "uid", "Uid", "UID", "unique_id", "UniqueID", "id", "Id", "ID"):
+            value = raw.get(key)
+            if value not in (None, ""):
+                return str(value).strip()
+
+        link_value = raw.get("Link") or raw.get("recording_url") or raw.get("record")
+        if not link_value:
+            return ""
+        link_text = str(link_value).strip()
+        href_match = re.search(r"""href=["']([^"']+)["']""", link_text)
+        href = href_match.group(1) if href_match else link_text
+        parsed = urlparse(href)
+        query = parse_qs(parsed.query)
+        for key in ("unique_id", "uid", "id"):
+            values = query.get(key)
+            if values and values[0]:
+                return str(values[0]).strip()
+        last_segment = unquote(parsed.path.rstrip("/").rsplit("/", 1)[-1])
+        if last_segment.lower().endswith(".mp3"):
+            last_segment = last_segment[:-4]
+        return last_segment.strip()
+
+    @staticmethod
+    def _recording_url_from_row(row) -> str:
+        raw = row.to_dict() if hasattr(row, "to_dict") else dict(row or {})
+        link_value = raw.get("Link") or raw.get("recording_url") or raw.get("record")
+        if not link_value:
+            return ""
+        link_text = str(link_value).strip()
+        href_match = re.search(r"""href=["']([^"']+)["']""", link_text)
+        return (href_match.group(1) if href_match else link_text).strip()
 
     @staticmethod
     def _entry_from_row(unique_id: str, row):
@@ -123,16 +205,38 @@ class UIHandlers:
         return matches.iloc[0]
 
     @staticmethod
+    def _single_visible_row_without_unique_id(df):
+        if df is None or getattr(df, "empty", True):
+            return None
+        if "UniqueId" in df.columns or len(df) != 1:
+            return None
+        return df.iloc[0]
+
+    @staticmethod
+    def _visual_row_index_from_select_event(evt: gr.SelectData):
+        index = getattr(evt, "index", None)
+        if isinstance(index, (list, tuple)):
+            if not index:
+                return None
+            index = index[0]
+        try:
+            return int(index)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _find_batch_original_row(
         displayed_df: pd.DataFrame,
         full_df_state: pd.DataFrame,
         visual_row_index: int,
     ):
         clicked_row = displayed_df.iloc[visual_row_index]
-        uid = str(clicked_row.get("UniqueId", "")).strip()
+        uid = UIHandlers._uid_from_row(clicked_row)
         if uid:
+            if "UniqueId" not in full_df_state.columns:
+                return clicked_row
             matches = full_df_state[full_df_state["UniqueId"].astype(str) == uid]
-            return matches.iloc[0] if not matches.empty else None
+            return matches.iloc[0] if not matches.empty else clicked_row
 
         prepared_full = utils.prepare_results_display(full_df_state)
         common_columns = [
@@ -205,6 +309,378 @@ class UIHandlers:
             return False
         return getattr(provider, "provider_name", "") == "gemini"
 
+    @staticmethod
+    def _empty_report_result(message: str):
+        empty = pd.DataFrame()
+        return message, empty, empty, empty, empty
+
+    @staticmethod
+    def _format_usage_summary(summary: dict[str, object]) -> str:
+        currency = "USD"
+        return (
+            "### Usage summary\n\n"
+            f"- Calls: {summary['total_calls']}\n"
+            f"- Duration: {summary['total_duration_seconds']}s / "
+            f"{summary['total_duration_minutes']} min\n"
+            f"- Tokens: {summary['total_tokens']} total "
+            f"(prompt {summary['prompt_tokens']}, output {summary['output_tokens']})\n"
+            f"- Internal cost: {summary['estimated_cost']} {currency}\n"
+            f"- Client price: {summary['estimated_client_price']} {currency}\n"
+            f"- Margin: {summary['margin']} {currency}"
+        )
+
+    def has_auth_users(self) -> bool:
+        auth_service = getattr(self.deps, "auth_service", None)
+        if auth_service is None or not callable(getattr(auth_service, "authenticate", None)):
+            return False
+
+        repository = getattr(auth_service, "_repository", None)
+        users_by_id = getattr(repository, "_users_by_id", None)
+        if users_by_id is not None:
+            return bool(users_by_id)
+
+        return True
+
+    @staticmethod
+    def _tenant_summary_dict(tenant) -> dict[str, str]:
+        tenant_id = str(getattr(tenant, "tenant_id", ""))
+        return {
+            "tenant_id": tenant_id,
+            "display_name": str(getattr(tenant, "display_name", "") or tenant_id),
+            "role": str(getattr(tenant, "role", "")),
+        }
+
+    @classmethod
+    def _auth_session(cls, user, allowed_tenants) -> dict[str, object]:
+        return {
+            "authenticated": True,
+            "user_id": str(getattr(user, "user_id", "")),
+            "login": str(getattr(user, "login", "")),
+            "allowed_tenants": [
+                cls._tenant_summary_dict(tenant) for tenant in allowed_tenants
+            ],
+        }
+
+    @staticmethod
+    def _tenant_dropdown_update(allowed_tenants):
+        choices = [
+            (
+                f"{tenant['display_name']} ({tenant['role']})"
+                if tenant.get("role")
+                else tenant["display_name"],
+                tenant["tenant_id"],
+            )
+            for tenant in allowed_tenants
+        ]
+        selected = allowed_tenants[0]["tenant_id"] if len(allowed_tenants) == 1 else None
+        return gr.update(choices=choices, value=selected, visible=True)
+
+    @staticmethod
+    def _empty_tenant_dropdown_update():
+        return gr.update(choices=[], value=None, visible=True)
+
+    @staticmethod
+    def _admin_tenants(allowed_tenants):
+        return [
+            tenant
+            for tenant in allowed_tenants
+            if str(tenant.get("role", "")).strip().casefold() == "admin"
+        ]
+
+    def _auth_session_active(self, auth_session) -> bool:
+        if not self.has_auth_users():
+            return False
+        if not isinstance(auth_session, dict):
+            return False
+        return bool(auth_session.get("authenticated") and auth_session.get("user_id"))
+
+    def _default_handler_authed(self) -> bool:
+        if self.has_auth_users():
+            return False
+        return os.environ.get("VOCHI_UI_PASSWORD", "") == ""
+
+    def _normalize_auth_args(self, authed=None, auth_session=None):
+        if auth_session is None and isinstance(authed, dict):
+            return True, authed
+        if authed is None:
+            authed = self._default_handler_authed()
+        return bool(authed), auth_session
+
+    @staticmethod
+    def _allowed_tenant_ids(auth_session) -> set[str]:
+        if not isinstance(auth_session, dict):
+            return set()
+        tenants = auth_session.get("allowed_tenants") or []
+        return {
+            str(tenant.get("tenant_id"))
+            for tenant in tenants
+            if isinstance(tenant, dict) and tenant.get("tenant_id")
+        }
+
+    def _authorize_tenant(self, tenant_id, authed=True, auth_session=None):
+        if self.has_auth_users():
+            # Auth-service mode always requires a live authenticated session.
+            if not self._auth_session_active(auth_session):
+                return False, None, "Access denied. Sign in to continue."
+
+            selected_tenant = (tenant_id or "").strip()
+            allowed_ids = self._allowed_tenant_ids(auth_session)
+            if not selected_tenant and len(allowed_ids) == 1:
+                selected_tenant = next(iter(allowed_ids))
+            if selected_tenant not in allowed_ids:
+                return False, None, "Access denied for the selected tenant."
+
+            auth_service = getattr(self.deps, "auth_service", None)
+            user_id = str(auth_session.get("user_id"))
+            try:
+                if not auth_service.can_access_tenant(user_id, selected_tenant):
+                    return False, None, "Access denied for the selected tenant."
+            except Exception:
+                return False, None, "Access denied for the selected tenant."
+            return True, selected_tenant, ""
+
+        if not authed:
+            return False, None, "Enter the password to continue."
+
+        return True, (tenant_id or config.DEFAULT_TENANT_ID).strip(), ""
+
+    def refresh_admin_tenants(self, auth_session, current_tenant=None):
+        """Refresh administrator choices from the live authorization source."""
+        if not self._auth_session_active(auth_session):
+            return gr.update(choices=[], value=None, visible=True), gr.update(visible=False)
+        auth_service = getattr(self.deps, "auth_service", None)
+        try:
+            tenants = auth_service.list_admin_tenants(
+                str(auth_session.get("user_id")), include_inactive=True
+            )
+        except Exception:
+            tenants = []
+        choices = [
+            (f"{tenant.display_name} ({tenant.role})", tenant.tenant_id)
+            for tenant in tenants
+        ]
+        current = str(current_tenant or "").strip()
+        live_ids = {tenant.tenant_id for tenant in tenants}
+        if current:
+            selected = current if current in live_ids else None
+        else:
+            selected = tenants[0].tenant_id if len(tenants) == 1 else None
+        return (
+            gr.update(choices=choices, value=selected, visible=True),
+            gr.update(visible=bool(tenants)),
+        )
+
+    def _authorize_tenant_admin(self, tenant_id, auth_session):
+        if not self._auth_session_active(auth_session):
+            return False, None, None
+        selected = str(tenant_id or "").strip()
+        if not selected:
+            return False, None, None
+        user_id = str(auth_session.get("user_id"))
+        try:
+            allowed = self.deps.auth_service.can_administer_tenant(user_id, selected)
+        except Exception:
+            allowed = False
+        return bool(allowed), selected, user_id
+
+    def load_tenant_admin_settings(self, tenant_id, auth_session):
+        allowed, selected, _user_id = self._authorize_tenant_admin(tenant_id, auth_session)
+        if not allowed:
+            return {}, "Access denied."
+        try:
+            return self.deps.tenant_admin_settings_service.load(selected), "Settings loaded."
+        except Exception:
+            return {}, "Unable to load tenant settings."
+
+    def save_tenant_admin_settings(self, tenant_id, document, auth_session):
+        allowed, selected, user_id = self._authorize_tenant_admin(tenant_id, auth_session)
+        if not allowed:
+            return {}, "Access denied."
+        try:
+            saved = self.deps.tenant_admin_settings_service.save(selected, document, user_id)
+            return saved, "Settings saved."
+        except TenantAdminValidationError as exc:
+            return {}, str(exc)
+        except Exception:
+            return {}, "Unable to save tenant settings."
+
+    TENANT_ADMIN_EDITABLE_FIELDS = (
+        "display_name", "status", "telephony_provider", "vochi_base_url",
+        "vochi_api_key", "mts_domain", "mts_api_key", "default_language",
+        "default_model_key", "batch_language_code", "batch_model_key", "batch_enabled",
+        "batch_size", "custom_batch_enabled", "scheduler_enabled", "scheduler_mode",
+        "scheduler_cron_time", "scheduler_interval_minutes", "scheduler_time_from",
+        "scheduler_time_to", "scheduler_call_type", "email_to", "email_from",
+        "email_from_name",
+    )
+    TENANT_ADMIN_OUTPUT_FIELDS = (
+        "tenant_id", *TENANT_ADMIN_EDITABLE_FIELDS, "active_prompts",
+    )
+
+    @classmethod
+    def _tenant_admin_form_result(cls, document, status):
+        enabled = bool(document.get("tenant_id"))
+        values = []
+        for field in cls.TENANT_ADMIN_OUTPUT_FIELDS:
+            value = document.get(field)
+            interactive = enabled and field not in {"tenant_id", "active_prompts"}
+            if field == "active_prompts":
+                value = [
+                    [
+                        prompt.get("key", ""),
+                        prompt.get("title", ""),
+                        prompt.get("body", ""),
+                        prompt.get("version", ""),
+                    ]
+                    for prompt in value or []
+                ]
+            values.append(gr.update(value=value, interactive=interactive))
+        return (
+            *values,
+            status,
+            gr.update(interactive=enabled),
+            gr.update(interactive=enabled),
+        )
+
+    def load_tenant_admin_form(self, tenant_id, auth_session):
+        document, status = self.load_tenant_admin_settings(tenant_id, auth_session)
+        return self._tenant_admin_form_result(document, status)
+
+    def save_tenant_admin_form(self, tenant_id, *values):
+        auth_session = values[-1]
+        form_values = values[:-1]
+        document = dict(zip(self.TENANT_ADMIN_EDITABLE_FIELDS, form_values))
+        document["tenant_id"] = tenant_id
+        saved, status = self.save_tenant_admin_settings(tenant_id, document, auth_session)
+        if not saved:
+            saved = document
+        return self._tenant_admin_form_result(saved, status)
+
+    @staticmethod
+    def _legacy_password_result(pwd: str):
+        ui_password = os.environ.get("VOCHI_UI_PASSWORD", "")
+
+        if not ui_password:
+            return (
+                False,
+                "âš ï¸ <b>VOCHI_UI_PASSWORD</b> is not configured. Access granted without password.",
+                gr.update(visible=False),
+            )
+
+        if (pwd or "").strip() == ui_password:
+            return True, "âœ… Access granted.", gr.update(visible=False)
+
+        return False, "âŒ Incorrect password.", gr.update(visible=True)
+
+    # ----------------------------------------------------------------------------
+    # Usage report handlers
+    # ----------------------------------------------------------------------------
+    def load_usage_report(
+        self,
+        tenant_id,
+        date_from,
+        date_to,
+        mode,
+        model_key,
+        call_user,
+        authed,
+        auth_session=None,
+    ):
+        if not authed:
+            return self._empty_report_result("🔐 Enter the password to load usage reports.")
+
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            return self._empty_report_result(denial)
+
+        repository = getattr(self.deps, "usage_report_repository", None)
+        if repository is None:
+            return self._empty_report_result(
+                "Usage reporting is not configured. Set SUPABASE_URL and SUPABASE_KEY."
+            )
+
+        try:
+            filters = UsageReportFilters(
+                tenant_id=(selected_tenant or "").strip() or None,
+                date_from=(date_from or "").strip() or None,
+                date_to=(date_to or "").strip() or None,
+                mode=mode or ALL_VALUE,
+                model_key=model_key or ALL_VALUE,
+                call_user=call_user or ALL_VALUE,
+            )
+            report = build_usage_report(repository.list_usage(filters))
+            return (
+                self._format_usage_summary(report.summary),
+                report.by_model_mode,
+                report.by_user,
+                report.details,
+                report.details,
+            )
+        except Exception as exc:
+            return self._empty_report_result(f"Usage report failed: {exc}")
+
+    def load_usage_report_filter_choices(self, tenant_id, authed, auth_session=None):
+        if not authed:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                "🔐 Enter the password to refresh report filters.",
+            )
+
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                denial,
+            )
+
+        repository = getattr(self.deps, "usage_report_repository", None)
+        if repository is None:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                "Usage reporting is not configured.",
+            )
+
+        try:
+            values = repository.list_filter_values((selected_tenant or "").strip() or None)
+            return (
+                gr.update(choices=values["models"], value=values["models"][0]),
+                gr.update(choices=values["modes"], value=values["modes"][0]),
+                gr.update(choices=values["users"], value=values["users"][0]),
+                "",
+            )
+        except Exception as exc:
+            return (
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                gr.update(choices=[ALL_VALUE], value=ALL_VALUE),
+                f"Report filter refresh failed: {exc}",
+            )
+
+    @staticmethod
+    def export_usage_report(details_df):
+        if details_df is None or details_df.empty:
+            return gr.update(value=None, visible=False), "❌ No report data to export."
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as tmp:
+            details_df.to_csv(tmp.name, index=False)
+            return gr.update(value=tmp.name, visible=True), "✅ File is ready to save."
+
     def _run_gemini_batch_analysis(self, entries, tenant, prompt_override):
         prompt_text = prompt_override or self.deps.batch_prompt_text or ""
         lang_instruction = GeminiAIAdapter._system_instruction(self.deps.batch_language)
@@ -213,6 +689,10 @@ class UIHandlers:
         # Resolve provider info for cache key
         provider = self.deps.ai_registry.get(self.deps.batch_model_key)
         provider_name = getattr(provider, "provider_name", self.deps.batch_model_key)
+        prompt_version = self.deps.prompt_service.get_prompt(
+            self.deps.batch_prompt_key,
+            tenant_id=tenant.tenant_id,
+        ).version
         
         # Determine strict prompt fragment for cache key compatibility
         # If prompt matches default config text, we treat custom_fragment as empty
@@ -232,6 +712,7 @@ class UIHandlers:
                 tenant.tenant_id,
                 entry.unique_id,
                 self.deps.batch_prompt_key,
+                prompt_version,
                 provider_name,
                 self.deps.batch_model_key,
                 custom_fragment,
@@ -285,6 +766,7 @@ class UIHandlers:
                             tenant.tenant_id,
                             entry.unique_id,
                             self.deps.batch_prompt_key,
+                            prompt_version,
                             provider_name,
                             self.deps.batch_model_key,
                             custom_fragment,
@@ -327,6 +809,7 @@ class UIHandlers:
         call_type_value,
         authed,
         tenant_id,
+        auth_session=None,
     ):
         """Фільтруе званкі і вяртае табліцу."""
         if not authed:
@@ -336,6 +819,21 @@ class UIHandlers:
                 gr.update(choices=[], value=None),
                 "🔐 Enter the password to apply the filter.",
                 gr.update(visible=True),
+                gr.update(visible=False),
+            )
+
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            return (
+                gr.update(value=pd.DataFrame(), visible=False),
+                gr.update(visible=False),
+                gr.update(choices=[], value=None),
+                denial,
+                gr.update(visible=False),
                 gr.update(visible=False),
             )
 
@@ -356,7 +854,7 @@ class UIHandlers:
             utils.validate_time_range(time_from, time_to)
             call_type = utils.resolve_call_type(call_type_value)
 
-            tenant = self.deps.tenant_service.resolve(tenant_id or None)
+            tenant = self.deps.tenant_service.resolve(selected_tenant or None)
             entries = self.deps.call_log_service.list_calls(
                 day,
                 tenant,
@@ -386,22 +884,46 @@ class UIHandlers:
                 gr.update(visible=False),
             )
 
-    def play_audio(self, selected_idx, df, tenant_id):
+    def play_audio(
+        self,
+        selected_idx,
+        df,
+        tenant_id,
+        authed,
+        auth_session=None,
+        current_uid=None,
+    ):
         """Прайграць аўдыё па выбраным радку."""
         if not self.deps.project_imports_available:
             return "Project dependencies are not loaded.", None, ""
 
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            return denial, None, ""
+
         unique_id = None
         row = None
+        current_uid_value = str(current_uid or "").strip()
 
         if selected_idx is not None:
             try:
+                selected_value = str(selected_idx).strip()
                 # Калі карыстальнік перадаў прамы UID радком
-                if not str(selected_idx).isdigit():
-                    unique_id = str(selected_idx)
+                if (
+                    current_uid_value
+                    and not selected_value.isdigit()
+                    and (selected_value.startswith("Batch:") or "|" in selected_value)
+                ):
+                    unique_id = current_uid_value
+                elif not selected_value.isdigit():
+                    unique_id = selected_value
                 # Калі выбар – індэкс радка ў табліцы
                 elif df is not None and not df.empty:
-                    row = df.iloc[int(selected_idx)]
+                    row = df.iloc[int(selected_value)]
                     # Спачатку спрабуем стандартнае поле UniqueId (VoChi, батч-вынікі)
                     value = row.get("UniqueId")
                     # Fallback для іншых API (напрыклад, МТС VATS, дзе ёсць uid)
@@ -413,13 +935,15 @@ class UIHandlers:
                     unique_id = str(value or "").strip()
             except (ValueError, IndexError):
                 return "<em>Invalid selection.</em>", None, ""
+        elif current_uid_value:
+            unique_id = current_uid_value
 
         # Адфільтраваць выпадкі, калі UID фактычна не зададзены
         if not unique_id or str(unique_id).strip().lower() in {"none", "nan"}:
             return "<em>Select a call to play.</em>", None, ""
 
         try:
-            tenant = self.deps.tenant_service.resolve(tenant_id or None)
+            tenant = self.deps.tenant_service.resolve(selected_tenant or None)
             handle = self.deps.call_log_service.ensure_recording(unique_id, tenant)
 
             # Для VoChi выкарыстоўваем стандартны URL, для МТС аддаем перавагу
@@ -444,6 +968,7 @@ class UIHandlers:
         call_type_value,
         tenant_id,
         authed,
+        auth_session=None,
     ):
         """
         Масавы аналіз (STREAMING).
@@ -458,6 +983,7 @@ class UIHandlers:
             call_type_value,
             tenant_id,
             authed,
+            auth_session,
             custom_prompt_override=None,
         )
 
@@ -512,6 +1038,7 @@ class UIHandlers:
         call_type_value,
         tenant_id,
         authed,
+        auth_session=None,
     ):
         """Запуск батча з карыстальніцкім промптам."""
 
@@ -523,6 +1050,7 @@ class UIHandlers:
             call_type_value,
             tenant_id,
             authed,
+            auth_session,
             custom_prompt_override=custom_prompt,
         )
 
@@ -534,6 +1062,7 @@ class UIHandlers:
         call_type_value,
         tenant_id,
         authed,
+        auth_session=None,
         *,
         custom_prompt_override: str | None,
     ):
@@ -556,7 +1085,23 @@ class UIHandlers:
         if not authed:
             yield (
                 hidden_df_update,
+                empty_state,
                 h2_error("🔐 Enter the password to run batch analysis."),
+                hidden_file,
+                hidden_filter,
+            )
+            return
+
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            yield (
+                hidden_df_update,
+                empty_state,
+                h2_error(denial),
                 hidden_file,
                 hidden_filter,
             )
@@ -565,16 +1110,8 @@ class UIHandlers:
         if not self.deps.project_imports_available:
             yield (
                 hidden_df_update,
+                empty_state,
                 h2_error("Project dependencies are not loaded."),
-                hidden_file,
-                hidden_filter,
-            )
-            return
-
-        if len(self.deps.ai_registry) == 0 or not self.deps.batch_model_key:
-            yield (
-                hidden_df_update,
-                h2_error("❌ Batch analysis is unavailable: AI model is not configured."),
                 hidden_file,
                 hidden_filter,
             )
@@ -587,7 +1124,27 @@ class UIHandlers:
             utils.validate_time_range(time_from, time_to)
             call_type = utils.resolve_call_type(call_type_value)
 
-            tenant = self.deps.tenant_service.resolve(tenant_id or None)
+            tenant = self.deps.tenant_service.resolve(selected_tenant or None)
+            effective_model_key, effective_language = (
+                self._resolve_tenant_batch_runtime(tenant)
+            )
+
+            try:
+                configured_provider = self.deps.ai_registry.get(effective_model_key)
+            except KeyError:
+                configured_provider = None
+            if configured_provider is None:
+                yield (
+                    hidden_df_update,
+                    empty_state,
+                    h2_error(
+                        f"❌ Configured batch model '{effective_model_key}' is not available."
+                    ),
+                    hidden_file,
+                    hidden_filter,
+                )
+                return
+
             entries = self.deps.call_log_service.list_calls(
                 day,
                 tenant,
@@ -599,6 +1156,7 @@ class UIHandlers:
             if not entries:
                 yield (
                     hidden_df_update,
+                    empty_state,
                     h3("ℹ️ No calls for the selected filter."),
                     hidden_file,
                     hidden_filter,
@@ -613,6 +1171,7 @@ class UIHandlers:
 
             yield (
                 gr.update(value=pd.DataFrame(), visible=False),
+                empty_state,
                 h3(f"Starting batch analysis for {total} call(s)..."),
                 hidden_file,
                 hidden_filter,
@@ -631,9 +1190,9 @@ class UIHandlers:
                     result = self.deps.analysis_service.analyze_call(
                         unique_id=entry.unique_id,
                         tenant=tenant,
-                        lang=self.deps.batch_language,
+                        lang=effective_language,
                         options=AnalysisOptions(
-                            model_key=self.deps.batch_model_key,
+                            model_key=effective_model_key,
                             prompt_key=self.deps.batch_prompt_key,
                             custom_prompt=prompt_override,
                             mode="ui_mass",
@@ -659,7 +1218,8 @@ class UIHandlers:
                 interim_msg = f"Analyzing {i}/{total} ({pct}%)… UID `{entry.unique_id}`"
 
                 yield (
-                    gr.update(value=partial_df, visible=True),
+                    gr.update(value=utils.prepare_results_display(partial_df), visible=True),
+                    partial_df,
                     h3(interim_msg),
                     hidden_file,
                     hidden_filter,
@@ -673,7 +1233,8 @@ class UIHandlers:
             )
 
             yield (
-                gr.update(value=final_df, visible=True),
+                gr.update(value=utils.prepare_results_display(final_df), visible=True),
+                final_df,
                 h2_success(final_msg),
                 hidden_file,
                 visible_filter,
@@ -682,6 +1243,7 @@ class UIHandlers:
         except Exception as exc:
             yield (
                 hidden_df_update,
+                empty_state,
                 h2_error(f"❌ Analysis failed: {exc}"),
                 hidden_file,
                 hidden_filter,
@@ -712,10 +1274,18 @@ class UIHandlers:
         report_date,
         tenant_id: str,
         authed: bool,
+        auth_session=None,
     ) -> str:
         """Send the complete CSV and a filtered HTML table by email."""
         if not authed:
             return "🔐 Enter the password to send email."
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            return denial
         if results_df is None or results_df.empty:
             return "❌ No data to send."
         if self.deps.email_report_service is None:
@@ -728,14 +1298,14 @@ class UIHandlers:
                 results_df,
                 filter_option=filter_option or "All",
                 report_date=day.isoformat(),
-                tenant_id=(tenant_id or config.DEFAULT_TENANT_ID).strip(),
+                tenant_id=(selected_tenant or config.DEFAULT_TENANT_ID).strip(),
             )
             return f"✅ Email sent to {recipient}."
         except Exception as exc:
             return f"❌ Email sending failed: {exc}"
 
     @staticmethod
-    def check_password(pwd: str):
+    def _legacy_check_password_unused(pwd: str):
         """Праверка доступу ў UI."""
         _UI_PASSWORD = os.environ.get("VOCHI_UI_PASSWORD", "")
 
@@ -750,6 +1320,59 @@ class UIHandlers:
             return True, "✅ Access granted.", gr.update(visible=False)
 
         return False, "❌ Incorrect password.", gr.update(visible=True)
+
+    def check_password(self, login_or_password: str, password: str | None = None):
+        """Authenticate either the new login/password form or legacy password gate."""
+        full_response = password is not None
+
+        if not self.has_auth_users():
+            legacy_password = password if full_response else login_or_password
+            authed, message, group_update = self._legacy_password_result(legacy_password)
+            if not full_response:
+                return authed, message, group_update
+            return (
+                authed,
+                {},
+                message,
+                group_update,
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=True),
+            )
+
+        auth_service = getattr(self.deps, "auth_service", None)
+        user = auth_service.authenticate((login_or_password or "").strip(), password or "")
+        if user is None:
+            empty_update = self._empty_tenant_dropdown_update()
+            response = (
+                False,
+                {},
+                "❌ Incorrect login or password.",
+                gr.update(visible=True),
+                empty_update,
+                empty_update,
+                gr.update(visible=False),
+            )
+            if full_response:
+                return response
+            return response[0], response[2], response[3]
+
+        allowed_tenants = auth_service.list_allowed_tenants(user.user_id)
+        session = self._auth_session(user, allowed_tenants)
+        tenant_update = self._tenant_dropdown_update(session["allowed_tenants"])
+        admin_tenants = self._admin_tenants(session["allowed_tenants"])
+        response = (
+            True,
+            session,
+            "Access granted.",
+            gr.update(visible=False),
+            tenant_update,
+            self._tenant_dropdown_update(admin_tenants),
+            gr.update(visible=bool(admin_tenants)),
+        )
+        if full_response:
+            return response
+        return response[0], response[2], response[3]
 
     @staticmethod
     def show_current_uid(current_uid: str):
@@ -772,6 +1395,8 @@ class UIHandlers:
         model_pref,
         tenant_id,
         current_uid,
+        authed,
+        auth_session=None,
     ):
         """
         Аналіз адной размовы З ПРАГРЭСАМ.
@@ -779,6 +1404,8 @@ class UIHandlers:
 
         uid_to_analyze = (current_uid or "").strip()
         row = None
+        if not uid_to_analyze and selected_idx is not None and not str(selected_idx).isdigit():
+            uid_to_analyze = str(selected_idx).strip()
         if not uid_to_analyze and selected_idx is not None and df is not None and not df.empty:
             try:
                 row = df.iloc[int(selected_idx)]
@@ -792,9 +1419,20 @@ class UIHandlers:
                 row = None
         if row is None and uid_to_analyze:
             row = self._find_row_by_unique_id(batch_df, uid_to_analyze)
+        if row is None and uid_to_analyze:
+            row = self._single_visible_row_without_unique_id(batch_df)
 
         if not uid_to_analyze:
             yield "Select a call from the list or batch results first."
+            return
+
+        allowed, selected_tenant, denial = self._authorize_tenant(
+            tenant_id,
+            authed,
+            auth_session,
+        )
+        if not allowed:
+            yield denial
             return
 
         if not self.deps.project_imports_available:
@@ -816,7 +1454,7 @@ class UIHandlers:
         )
 
         try:
-            tenant = self.deps.tenant_service.resolve(tenant_id or None)
+            tenant = self.deps.tenant_service.resolve(selected_tenant or None)
             lang = config.Language(lang_code)
 
             result = self.deps.analysis_service.analyze_call(
@@ -842,7 +1480,9 @@ class UIHandlers:
         displayed_df: pd.DataFrame,
         full_df_state: pd.DataFrame,
         tenant_id: str,
+        authed,
         evt: gr.SelectData,
+        auth_session=None,
     ):
         """Апрацоўвае выбар радка з табліцы вынікаў (Batch results)."""
         empty_return = (
@@ -858,13 +1498,15 @@ class UIHandlers:
             evt is None
             or displayed_df is None
             or displayed_df.empty
-            or full_df_state is None
-            or full_df_state.empty
         ):
             return empty_return
+        if full_df_state is None:
+            full_df_state = pd.DataFrame()
 
         try:
-            visual_row_index = evt.index[0]
+            visual_row_index = self._visual_row_index_from_select_event(evt)
+            if visual_row_index is None:
+                return empty_return
             original_row = self._find_batch_original_row(
                 displayed_df,
                 full_df_state,
@@ -873,7 +1515,7 @@ class UIHandlers:
             if original_row is None:
                 return empty_return
             row_dict = original_row.to_dict()
-            uid = str(row_dict.get("UniqueId", "")).strip()
+            uid = self._uid_from_row(row_dict)
             if not uid:
                 return empty_return
 
@@ -887,8 +1529,23 @@ class UIHandlers:
             uid_md_update = self.show_current_uid(uid)
 
             try:
-                tenant = self.deps.tenant_service.resolve(tenant_id or None)
-                handle = self.deps.call_log_service.ensure_recording(uid, tenant)
+                allowed, selected_tenant, denial = self._authorize_tenant(
+                    tenant_id,
+                    authed,
+                    auth_session,
+                )
+                if not allowed:
+                    return dd_update, uid, uid_md_update, denial, None, ""
+                tenant = self.deps.tenant_service.resolve(selected_tenant or None)
+                recording_url = self._recording_url_from_row(row_dict)
+                if recording_url:
+                    handle = self.deps.call_log_service.ensure_recording(
+                        uid,
+                        tenant,
+                        recording_url,
+                    )
+                else:
+                    handle = self.deps.call_log_service.ensure_recording(uid, tenant)
                 listen_url = handle.source_uri or tenant.recording_url(uid)
                 html = f'URL: <a id="audio-listen-link" href="{listen_url}">{listen_url}</a>'
                 audio_uri = handle.local_uri
@@ -898,5 +1555,5 @@ class UIHandlers:
 
             return dd_update, uid, uid_md_update, html, audio_uri, status_msg
 
-        except (AttributeError, IndexError, KeyError):
+        except (AttributeError, IndexError, KeyError, TypeError):
             return empty_return

@@ -57,7 +57,9 @@ def test_vertex_batch_runner_reads_usage_metadata_from_output(monkeypatch) -> No
         @staticmethod
         def download_as_text(encoding="utf-8"):
             return (
-                '{"response":{"candidates":[{"content":{"parts":[{"text":"analysis"}]}}],'
+                '{"request":{"contents":[{"parts":[{"fileData":'
+                '{"fileUri":"gs://bucket/call-1.wav"}}]}]},'
+                '"response":{"candidates":[{"content":{"parts":[{"text":"analysis"}]}}],'
                 '"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,'
                 '"totalTokenCount":15,"thoughtsTokenCount":0}}}\n'
             )
@@ -65,7 +67,7 @@ def test_vertex_batch_runner_reads_usage_metadata_from_output(monkeypatch) -> No
     runner._gcs_bucket = SimpleNamespace(list_blobs=lambda prefix: [Blob()])
 
     results = runner._read_output_jsonl(
-        [BatchTask(key="call-1", path="call.wav", mime_type="audio/wav")],
+        {"gs://bucket/call-1.wav": "call-1"},
         "batch_x",
     )
 

@@ -230,6 +230,28 @@ def test_get_recording_fetches_metadata_then_downloads_audio() -> None:
     assert "params" not in download_kwargs
 
 
+def test_get_recording_uses_registered_direct_record_url() -> None:
+    session = FakeSession()
+    session.queue(
+        FakeResponse(
+            content=b"audio-bytes",
+            headers={"Content-Type": "audio/mpeg"},
+        )
+    )
+    adapter = make_adapter(session)
+    direct_url = "https://bot.example/permanent/uid-9"
+
+    adapter.register_record_url("uid-9", direct_url)
+    recording = adapter.get_recording("uid-9", tenant_id="tenant")
+
+    assert recording.unique_id == "uid-9"
+    assert recording.content == b"audio-bytes"
+    assert recording.content_type == "audio/mpeg"
+    assert recording.source_uri == direct_url
+    assert session.calls[0][0] == direct_url
+    assert "params" not in session.calls[0][1]
+
+
 def test_get_recording_uses_non_secret_fallback_source_uri() -> None:
     session = FakeSession()
     session.queue(FakeResponse(json_data={"download_url": "https://s3.example/audio"}))

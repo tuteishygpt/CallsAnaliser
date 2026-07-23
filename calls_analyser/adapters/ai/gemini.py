@@ -8,6 +8,7 @@ import time
 from typing import Any, Callable, Mapping, Optional
 
 from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.google_credentials import load_google_credentials
 from calls_analyser.domain.models import AnalysisResult, Language
 from calls_analyser.ports.ai import AIModelPort, AudioSource
 from calls_analyser.services.usage import extract_usage_metadata, usage_metadata_to_dict
@@ -47,6 +48,7 @@ class GeminiAIAdapter(AIModelPort):
         self._project = project or os.environ.get("GOOGLE_CLOUD_PROJECT", "canvas-genius-492412-c3")
         self._location = location or os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
+        self._credentials = None if api_key else load_google_credentials()
         has_adc = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
 
         if api_key and self._project and self._location and not model.startswith("projects/"):
@@ -58,10 +60,8 @@ class GeminiAIAdapter(AIModelPort):
         else:
             self._model = model
 
-        if not self._api_key and not has_adc:
-            raise AIModelError(
-                "Neither GOOGLE_API_KEY nor GOOGLE_APPLICATION_CREDENTIALS is configured."
-            )
+        if not self._api_key and self._credentials is None and not has_adc:
+            raise AIModelError("No Google credentials are configured.")
 
         self._client_factory = client_factory or self._default_factory
         self._client = self._client_factory(self._api_key)
@@ -78,6 +78,20 @@ class GeminiAIAdapter(AIModelPort):
         if api_key:
             logger.info("Creating Vertex AI client with api_key")
             return genai.Client(vertexai=True, api_key=api_key)
+
+        if self._credentials is not None:
+            logger.info(
+                "Creating Vertex AI client with in-memory service-account credentials "
+                "(project=%s, location=%s)",
+                self._project,
+                self._location,
+            )
+            return genai.Client(
+                vertexai=True,
+                project=self._project,
+                location=self._location,
+                credentials=self._credentials,
+            )
 
         logger.info(
             "Creating Vertex AI client with ADC (project=%s, location=%s)",

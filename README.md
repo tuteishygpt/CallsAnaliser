@@ -82,6 +82,24 @@ This Space requires the following Secrets (Settings → Secrets and variables):
 
 Optional: `SUPABASE_URL` + `SUPABASE_KEY` to use Supabase as cache.
 
+## Scheduled batches
+
+`SCHEDULER_TIMEZONE` selects the one IANA timezone used by every tenant
+schedule (for example, `Europe/Nicosia`). It defaults to `UTC`. Enabled
+tenants and their cron or interval settings are resolved once when the
+application starts, so schedule changes require an application restart.
+
+Scheduled execution requires complete `SUPABASE_URL` and `SUPABASE_KEY`
+credentials and the `scheduler_runs` schema from
+`docs/supabase/multi_tenant_schema.sql` applied to that Supabase project. The
+scheduler fails closed when it cannot create or use this run guard; it never
+falls back to an unguarded batch.
+
+Each planned tenant slot is claimed once before any calls are listed or
+downloaded. An interrupted slot left in `running` state requires manual
+intervention. This is intentional: there is no heartbeat, stale-run takeover,
+automatic backfill, or dynamic rescheduling.
+
 ## Email reports
 
 Batch results can be sent through Brevo HTTPS API, with Gmail SMTP as a fallback, as:

@@ -51,7 +51,7 @@ class SupabaseUsageTracker:
         model_key: str,
         mode: str,
         usage: UsageMetadata | None,
-        cache_key: tuple[str, str, str, str, str, str],
+        cache_key: tuple[object, ...],
     ) -> None:
         """Insert one paid usage row; failures are logged and non-fatal."""
         if usage is None:

@@ -36,7 +36,7 @@ class FileBackedCache(MutableMapping[CacheKey, AnalysisResult]):
                 # A simple way is to use a separator that is unlikely to be in the data, 
                 # but the data includes prompts which can be anything.
                 # However, the CacheKey components are:
-                # (tenant_id, unique_id, prompt_key, provider_name, model_key, custom_fragment)
+                # (tenant_id, unique_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment)
                 # We can try to rely on JSON serialization of the list of keys if we store it as a list of entries instead of a dict in the file?
                 # But for a dict-like usage, we need a hashable key.
                 
@@ -44,6 +44,8 @@ class FileBackedCache(MutableMapping[CacheKey, AnalysisResult]):
                 try:
                     key_parts = json.loads(key_str)
                     if isinstance(key_parts, list) and len(key_parts) == 6:
+                        key_parts.insert(3, 1)
+                    if isinstance(key_parts, list) and len(key_parts) == 7:
                         key = tuple(key_parts) # type: ignore
                         self._data[key] = AnalysisResult(**value_dict)
                 except (json.JSONDecodeError, TypeError, ValueError):

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 from calls_analyser.domain.exceptions import AIModelError
+from calls_analyser.google_credentials import load_google_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,14 @@ class BatchAnalysisResult:
     usage_metadata: dict[str, int] | None = None
 
 
+@dataclass(frozen=True)
+class UploadedBatchInputs:
+    """The exact audio URI mapping created for one Vertex batch."""
+
+    uri_by_key: dict[str, str]
+    key_by_uri: dict[str, str]
+
+
 # ---------------------------------------------------------------------------
 # Legacy GeminiBatchRunner (sequential, one-by-one generate_content calls).
 # Commented out — replaced by VertexBatchRunner which uses the real Batch API.
@@ -86,9 +95,8 @@ class VertexBatchRunner:
     """Submit audio analysis as a Vertex AI *batch* job via GCS.
 
     Required:
-    * ``GOOGLE_APPLICATION_CREDENTIALS`` — path to service-account JSON
-      (or ``GOOGLE_SERVICE_ACCOUNT_JSON`` env var with raw JSON content,
-      which ``app.py`` / ``runner.py`` write to a temp file on startup).
+    * Google credentials via ``GOOGLE_SERVICE_ACCOUNT_JSON_B64`` (decoded
+      entirely in memory) or local ADC via ``GOOGLE_APPLICATION_CREDENTIALS``.
     * ``GCS_BATCH_BUCKET`` — GCS bucket name for staging audio and JSONL.
     * ``GOOGLE_CLOUD_PROJECT`` — GCP project id.
 
@@ -142,12 +150,18 @@ class VertexBatchRunner:
         else:
             self._model = model
 
-        self._client = genai.Client(
+        credentials = load_google_credentials()
+        client_options = dict(
             vertexai=True,
             project=self._project,
             location=self._location,
         )
-        self._gcs = gcs_storage.Client(project=self._project)
+        storage_options = {"project": self._project}
+        if credentials is not None:
+            client_options["credentials"] = credentials
+            storage_options["credentials"] = credentials
+        self._client = genai.Client(**client_options)
+        self._gcs = gcs_storage.Client(**storage_options)
         self._gcs_bucket = self._gcs.bucket(self._bucket_name)
 
     # ------------------------------------------------------------------ #
@@ -185,6 +199,13 @@ class VertexBatchRunner:
         pending = list(tasks)
         if not pending:
             return {}
+        seen_keys: set[str] = set()
+        for task in pending:
+            if not task.key.strip():
+                raise ValueError(f"blank task key: {task.key!r}")
+            if task.key in seen_keys:
+                raise ValueError(f"duplicate task key: {task.key}")
+            seen_keys.add(task.key)
 
         all_results: Dict[str, BatchAnalysisResult] = {}
         attempts_per_chunk = max(1, max_attempts)
@@ -197,11 +218,14 @@ class VertexBatchRunner:
                 "Batch chunk %d/%d (%d tasks)", chunk_num, total_chunks, len(chunk),
             )
             chunk_results: Dict[str, BatchAnalysisResult] = {}
+            chunk_error: Exception | None = None
             for attempt in range(1, attempts_per_chunk + 1):
                 try:
                     chunk_results = self._run_single_batch(chunk, prompt_text)
+                    chunk_error = None
                     break
                 except Exception as exc:
+                    chunk_error = exc
                     if attempt >= attempts_per_chunk:
                         logger.error(
                             "Batch chunk %d/%d failed after %d attempt(s): %s",
@@ -210,7 +234,7 @@ class VertexBatchRunner:
                             attempts_per_chunk,
                             exc,
                         )
-                        raise
+                        break
                     logger.warning(
                         "Batch chunk %d/%d failed on attempt %d/%d: %s. Restarting batch chunk.",
                         chunk_num,
@@ -219,6 +243,13 @@ class VertexBatchRunner:
                         attempts_per_chunk,
                         exc,
                     )
+            if chunk_error is not None:
+                chunk_results = {
+                    task.key: BatchAnalysisResult(
+                        text=f"Error: batch chunk failed: {chunk_error}",
+                    )
+                    for task in chunk
+                }
             all_results.update(chunk_results)
 
         return all_results
@@ -235,10 +266,10 @@ class VertexBatchRunner:
         gcs_prefix = f"batch_{job_id}"
 
         try:
-            audio_uris = self._upload_audio_to_gcs(tasks, gcs_prefix)
+            uploaded_inputs = self._upload_audio_to_gcs(tasks, gcs_prefix)
             input_uri = self._write_jsonl_to_gcs(
                 tasks,
-                audio_uris,
+                uploaded_inputs.uri_by_key,
                 prompt_text,
                 gcs_prefix,
             )
@@ -262,7 +293,7 @@ class VertexBatchRunner:
 
             self._poll_until_done(job_name)
 
-            return self._read_output_jsonl(tasks, gcs_prefix)
+            return self._read_output_jsonl(uploaded_inputs.key_by_uri, gcs_prefix)
         finally:
             self._cleanup_gcs(gcs_prefix)
 
@@ -273,17 +304,20 @@ class VertexBatchRunner:
         self,
         tasks: List[BatchTask],
         gcs_prefix: str,
-    ) -> Dict[str, str]:
-        """Upload local audio → GCS. Returns {task_key: gs://uri}."""
-        uris: Dict[str, str] = {}
+    ) -> UploadedBatchInputs:
+        """Upload local audio and preserve both directions of its URI mapping."""
+        uri_by_key: Dict[str, str] = {}
+        key_by_uri: Dict[str, str] = {}
         for i, task in enumerate(tasks, start=1):
             ext = os.path.splitext(task.path)[1] or ".bin"
             blob_name = f"{gcs_prefix}/audio/{task.key}{ext}"
             logger.info("Uploading %d/%d to GCS: %s", i, len(tasks), blob_name)
             blob = self._gcs_bucket.blob(blob_name)
             blob.upload_from_filename(task.path, content_type=task.mime_type)
-            uris[task.key] = f"gs://{self._bucket_name}/{blob_name}"
-        return uris
+            uri = f"gs://{self._bucket_name}/{blob_name}"
+            uri_by_key[task.key] = uri
+            key_by_uri[uri] = task.key
+        return UploadedBatchInputs(uri_by_key=uri_by_key, key_by_uri=key_by_uri)
 
     # ------------------------------------------------------------------ #
     # Step 2: write JSONL request file to GCS
@@ -373,7 +407,7 @@ class VertexBatchRunner:
     # ------------------------------------------------------------------ #
     def _read_output_jsonl(
         self,
-        tasks: List[BatchTask],
+        key_by_uri: Dict[str, str],
         gcs_prefix: str,
     ) -> Dict[str, BatchAnalysisResult]:
         results: Dict[str, BatchAnalysisResult] = {}
@@ -384,54 +418,163 @@ class VertexBatchRunner:
 
         if not jsonl_blobs:
             logger.warning("No output JSONL files found under %s", output_prefix)
-            for task in tasks:
-                results[task.key] = BatchAnalysisResult(text="Error: no output file")
-            return results
+            return {
+                key: BatchAnalysisResult(text="Error: missing response")
+                for key in key_by_uri.values()
+            }
 
-        output_rows: list[dict] = []
+        seen_uris: set[str] = set()
         for blob in jsonl_blobs:
             content = blob.download_as_text(encoding="utf-8")
-            for line in content.strip().splitlines():
+            for line_number, line in enumerate(content.splitlines(), start=1):
                 if not line.strip():
                     continue
                 try:
-                    output_rows.append(json.loads(line))
-                except json.JSONDecodeError:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Malformed JSONL row in %s line %d: %s",
+                        blob.name,
+                        line_number,
+                        exc,
+                    )
+                    continue
+                if not isinstance(row, dict):
+                    logger.warning(
+                        "Ignoring non-object JSONL row in %s line %d",
+                        blob.name,
+                        line_number,
+                    )
                     continue
 
-        for idx, row in enumerate(output_rows):
-            task_key = tasks[idx].key if idx < len(tasks) else ""
+                uri = self._request_file_uri(row)
+                if uri is None:
+                    logger.warning(
+                        "Ignoring output row with missing request fileUri in %s line %d",
+                        blob.name,
+                        line_number,
+                    )
+                    continue
+                task_key = key_by_uri.get(uri)
+                if task_key is None:
+                    logger.warning(
+                        "Ignoring output row with unknown request fileUri %s in %s line %d",
+                        uri,
+                        blob.name,
+                        line_number,
+                    )
+                    continue
+                if uri in seen_uris:
+                    logger.warning(
+                        "Duplicate response for request fileUri %s in %s line %d",
+                        uri,
+                        blob.name,
+                        line_number,
+                    )
+                    results[task_key] = BatchAnalysisResult(
+                        text=f"Error: duplicate response for fileUri {uri}",
+                    )
+                    continue
+                seen_uris.add(uri)
 
-            response = row.get("response", {})
-            error = row.get("error")
-            if error:
-                if task_key:
-                    results[task_key] = BatchAnalysisResult(text=f"Error: {error}")
-                continue
+                error = row.get("error")
+                status = row.get("status")
+                if error is not None:
+                    results[task_key] = BatchAnalysisResult(
+                        text=f"Error: {self._error_detail(error)}",
+                    )
+                    continue
+                if status:
+                    results[task_key] = BatchAnalysisResult(
+                        text=f"Error: {self._error_detail(status)}",
+                    )
+                    continue
 
-            text = self._extract_text_from_response(response)
-            if task_key:
+                response = row.get("response")
+                if not isinstance(response, dict):
+                    results[task_key] = BatchAnalysisResult(text="Error: missing response")
+                    continue
+                try:
+                    text = self._extract_text_from_response(response)
+                except ValueError as exc:
+                    logger.warning(
+                        "Malformed response payload for request fileUri %s in %s line %d: %s",
+                        uri,
+                        blob.name,
+                        line_number,
+                        exc,
+                    )
+                    results[task_key] = BatchAnalysisResult(
+                        text="Error: malformed response payload",
+                    )
+                    continue
                 usage_metadata = self._extract_usage_metadata_from_response(response)
                 results[task_key] = BatchAnalysisResult(
                     text=text or "Error: no text in response",
                     usage_metadata=usage_metadata,
                 )
 
-        for task in tasks:
-            if task.key not in results:
-                results[task.key] = BatchAnalysisResult(text="Error: no response received")
+        for task_key in key_by_uri.values():
+            if task_key not in results:
+                results[task_key] = BatchAnalysisResult(text="Error: missing response")
 
         logger.info("Parsed %d results from output JSONL", len(results))
         return results
 
     @staticmethod
+    def _request_file_uri(row: dict[str, Any]) -> str | None:
+        request = row.get("request")
+        if not isinstance(request, dict):
+            return None
+        contents = request.get("contents")
+        if not isinstance(contents, list):
+            return None
+        uris: list[str] = []
+        for content in contents:
+            if not isinstance(content, dict):
+                continue
+            parts = content.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                file_data = part.get("fileData")
+                if not isinstance(file_data, dict):
+                    continue
+                uri = file_data.get("fileUri")
+                if isinstance(uri, str) and uri:
+                    uris.append(uri)
+        return uris[0] if len(uris) == 1 else None
+
+    @staticmethod
+    def _error_detail(value: Any) -> str:
+        if isinstance(value, dict) and value.get("message"):
+            return str(value["message"])
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
     def _extract_text_from_response(response: dict) -> str:
         candidates = response.get("candidates", [])
+        if not isinstance(candidates, list):
+            raise ValueError("candidates must be a list")
         for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise ValueError("candidate must be an object")
             content = candidate.get("content", {})
+            if not isinstance(content, dict):
+                raise ValueError("candidate content must be an object")
             parts = content.get("parts", [])
+            if not isinstance(parts, list):
+                raise ValueError("candidate parts must be a list")
             for part in parts:
+                if not isinstance(part, dict):
+                    raise ValueError("candidate part must be an object")
                 text = part.get("text")
+                if text is not None and not isinstance(text, str):
+                    raise ValueError("candidate text must be a string")
                 if text:
                     return text
         return ""
@@ -465,11 +608,20 @@ class VertexBatchRunner:
         """Best-effort deletion of all blobs under the batch prefix."""
         try:
             blobs = list(self._gcs_bucket.list_blobs(prefix=f"{gcs_prefix}/"))
-            for blob in blobs:
-                blob.delete()
-            logger.info("Cleaned up %d GCS objects under %s/", len(blobs), gcs_prefix)
         except Exception as exc:
-            logger.warning("GCS cleanup failed for %s: %s", gcs_prefix, exc)
+            logger.warning("GCS cleanup listing failed for %s: %s", gcs_prefix, exc)
+            return
+
+        for blob in blobs:
+            try:
+                blob.delete()
+            except Exception as exc:
+                logger.warning(
+                    "GCS cleanup failed for object %s: %s",
+                    getattr(blob, "name", "<unknown>"),
+                    exc,
+                )
+        logger.info("Cleaned up %d GCS objects under %s/", len(blobs), gcs_prefix)
 
 
 # ---------------------------------------------------------------------------

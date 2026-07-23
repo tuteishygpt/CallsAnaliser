@@ -25,7 +25,7 @@ class TestSupabaseCache:
 
     @pytest.fixture
     def sample_key(self):
-        return ("tenant1", "uid123", "prompt1", "gemini", "gemini-pro", "custom")
+        return ("tenant1", "uid123", "prompt1", 2, "gemini", "gemini-pro", "custom")
 
     @pytest.fixture
     def sample_result(self):
@@ -59,6 +59,7 @@ class TestSupabaseCache:
             "tenant_id": "tenant1",
             "call_unique_id": "uid123",
             "prompt_key": "prompt1",
+            "prompt_version": 2,
             "provider_name": "gemini",
             "model_key": "gemini-pro",
             "custom_fragment": "custom",
@@ -75,15 +76,16 @@ class TestSupabaseCache:
             _ = cache[sample_key]
 
     def test_get_many_fetches_matching_keys_in_one_query(self, cache, sample_result):
-        key_1 = ("tenant1", "uid123", "prompt1", "gemini", "gemini-pro", "custom")
-        key_2 = ("tenant1", "uid456", "prompt1", "gemini", "gemini-pro", "custom")
-        other_key = ("tenant1", "uid999", "prompt1", "gemini", "gemini-pro", "custom")
+        key_1 = ("tenant1", "uid123", "prompt1", 2, "gemini", "gemini-pro", "custom")
+        key_2 = ("tenant1", "uid456", "prompt1", 2, "gemini", "gemini-pro", "custom")
+        other_key = ("tenant1", "uid999", "prompt1", 2, "gemini", "gemini-pro", "custom")
         mock_response = MagicMock()
         mock_response.data = [
             {
                 "tenant_id": "tenant1",
                 "call_unique_id": "uid123",
                 "prompt_key": "prompt1",
+                "prompt_version": 2,
                 "provider_name": "gemini",
                 "model_key": "gemini-pro",
                 "custom_fragment": "custom",
@@ -94,6 +96,7 @@ class TestSupabaseCache:
                 "tenant_id": "tenant1",
                 "call_unique_id": "uid456",
                 "prompt_key": "prompt1",
+                "prompt_version": 2,
                 "provider_name": "gemini",
                 "model_key": "gemini-pro",
                 "custom_fragment": "custom",
@@ -104,6 +107,7 @@ class TestSupabaseCache:
                 "tenant_id": "tenant1",
                 "call_unique_id": "uid-not-requested",
                 "prompt_key": "prompt1",
+                "prompt_version": 2,
                 "provider_name": "gemini",
                 "model_key": "gemini-pro",
                 "custom_fragment": "custom",
@@ -122,7 +126,7 @@ class TestSupabaseCache:
         assert results[key_2].text == "Second result"
         cache._table.select.assert_called_once_with("*")
         builder.in_.assert_called_once_with("call_unique_id", ["uid123", "uid456", "uid999"])
-        assert builder.eq.call_count == 5
+        assert builder.eq.call_count == 6
 
     def test_setitem(self, cache, sample_key, sample_result):
         cache[sample_key] = sample_result
@@ -131,6 +135,7 @@ class TestSupabaseCache:
             "tenant_id": "tenant1",
             "call_unique_id": "uid123",
             "prompt_key": "prompt1",
+            "prompt_version": 2,
             "provider_name": "gemini",
             "model_key": "gemini-pro",
             "custom_fragment": "custom",
@@ -140,7 +145,7 @@ class TestSupabaseCache:
         
         cache._table.upsert.assert_called_with(
             expected_data, 
-            on_conflict="tenant_id, call_unique_id, prompt_key, provider_name, model_key, custom_fragment"
+            on_conflict="tenant_id, call_unique_id, prompt_key, prompt_version, provider_name, model_key, custom_fragment"
         )
         cache._table.upsert.return_value.execute.assert_called_once()
     
@@ -153,6 +158,7 @@ class TestSupabaseCache:
             "tenant_id": "tenant1",
             "call_unique_id": "uid123",
             "prompt_key": "prompt1",
+            "prompt_version": 2,
             "provider_name": "gemini",
             "model_key": "gemini-pro",
             "custom_fragment": "custom",

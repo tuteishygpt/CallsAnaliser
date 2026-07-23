@@ -101,12 +101,42 @@ def test_analysis_service_accepts_external_cache() -> None:
         tenant.tenant_id,
         "abc",
         options.prompt_key,
+        1,
         ai.provider_name,
         options.model_key,
         "custom",
     )
     assert expected_key in cache
     assert cache[expected_key].text == "result-1"
+
+
+def test_cache_separates_models_that_share_a_provider_name() -> None:
+    registry: ProviderRegistry[AIModelPort] = ProviderRegistry()
+    first = FakeAIModel()
+    second = FakeAIModel()
+    registry.register("model-a", first)
+    registry.register("model-b", second)
+    cache: dict[CacheKey, AnalysisResult] = {}
+    service = AnalysisService(
+        StubCallLogService(), registry, PromptService(PROMPTS), cache=cache
+    )
+    tenant = TenantConfig(tenant_id="tenant", vochi_base_url="https://api")
+
+    first_result = service.analyze_call(
+        "abc", tenant, Language.ENGLISH, AnalysisOptions("model-a", "simple")
+    )
+    second_result = service.analyze_call(
+        "abc", tenant, Language.ENGLISH, AnalysisOptions("model-b", "simple")
+    )
+
+    assert first.calls == 1
+    assert second.calls == 1
+    assert set(cache) == {
+        ("tenant", "abc", "simple", 1, "fake", "model-a", ""),
+        ("tenant", "abc", "simple", 1, "fake", "model-b", ""),
+    }
+    assert first_result.model == "fake-model"
+    assert second_result.model == "fake-model"
 
 
 def test_analysis_service_records_usage_for_uncached_model_call_only() -> None:
@@ -150,6 +180,7 @@ def test_analysis_service_records_usage_for_uncached_model_call_only() -> None:
         "tenant",
         "abc",
         "simple",
+        1,
         "fake",
         "fake-model",
         "custom",
