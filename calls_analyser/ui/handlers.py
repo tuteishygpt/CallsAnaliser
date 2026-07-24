@@ -1219,11 +1219,10 @@ class UIHandlers:
 
                 rows.append(row_data)
 
-                partial_df = pd.DataFrame(rows)
                 interim_msg = f"Analyzing {i}/{total} ({pct}%)… UID `{entry.unique_id}`"
 
                 yield (
-                    gr.update(value=utils.prepare_results_display(partial_df), visible=True),
+                    gr.skip(),
                     gr.skip(),
                     h3(interim_msg),
                     hidden_file,

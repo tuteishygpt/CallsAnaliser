@@ -24,13 +24,6 @@ JS_FIX_LINKS = """
 }
 """
 
-JS_REMEASURE_BATCH_RESULTS = """
-() => {
-  setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
-}
-"""
-
-
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
     auth_mode = handlers.has_auth_users()
     legacy_password_required = os.environ.get("VOCHI_UI_PASSWORD", "") != ""
@@ -142,7 +135,6 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                     label="Batch results",
                     interactive=True,
                     visible=False,
-                    row_count=10,
                     datatype=[
                         "str",
                         "str",
@@ -494,8 +486,6 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
-        ).then(
-            fn=None, js=JS_REMEASURE_BATCH_RESULTS
         )
 
         batch_custom_btn.click(
@@ -541,8 +531,6 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
-        ).then(
-            fn=None, js=JS_REMEASURE_BATCH_RESULTS
         )
 
         batch_results_df.select(

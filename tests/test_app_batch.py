@@ -18,17 +18,6 @@ import app
 from calls_analyser.ui import utils
 
 
-def test_batch_results_table_reserves_space_for_multiple_rows() -> None:
-    batch_results_table = next(
-        component
-        for component in app.demo.config["components"]
-        if component["type"] == "dataframe"
-        and component["props"].get("label") == "Batch results"
-    )
-
-    assert batch_results_table["props"]["row_count"] == [10, "dynamic"]
-
-
 class _StubTenantService:
     def __init__(self, tenant: SimpleNamespace) -> None:
         self._tenant = tenant
@@ -207,25 +196,14 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     assert isinstance(partial_state, dict)
     assert partial_state == gr.skip()
     assert partial_filter == gr.skip()
-    partial_df = partial_df_update["value"]
-    assert "UniqueId" not in partial_df.columns
-    assert list(partial_df["Status"]) == ["✅"]
-    assert list(partial_df["Needs follow-up"]) == ["Yes"]
-    assert list(partial_df["Reason"]) == ["Schedule callback"]
-    assert partial_df.iloc[0]["Link"] == (
-        "<a href=\"https://bot.example/permanent/call-1\" target=\"_blank\">Listen</a>"
-    )
+    assert partial_df_update == gr.skip()
 
     error_df_update, error_state, error_message, _, error_filter = result[2]
     assert "Analyzing 2/3" in error_message
     assert isinstance(error_state, dict)
     assert error_state == gr.skip()
     assert error_filter == gr.skip()
-    error_df = error_df_update["value"]
-    assert "UniqueId" not in error_df.columns
-    assert list(error_df["Status"]) == ["✅", "❌"]
-    assert error_df.iloc[1]["Reason"].startswith("❌ network down")
-    assert error_df.iloc[1]["Link"] == ""
+    assert error_df_update == gr.skip()
 
     final_df_update, final_state, final_message, final_file, final_filter = result[4]
     assert final_message == "## ✅ Batch analysis completed. Found: 3, processed successfully: 2"
@@ -242,6 +220,39 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
+
+
+def test_ui_mass_analyze_updates_results_table_only_once_with_complete_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = [_batch_entry(f"call-{index}") for index in range(1, 5)]
+    tenant, _ = _configure_batch_environment(
+        monkeypatch,
+        entries=entries,
+        responses={
+            entry.unique_id: json.dumps(
+                {"needs_follow_up": True, "reason": f"Follow up {entry.unique_id}"}
+            )
+            for entry in entries
+        },
+    )
+
+    updates = list(
+        app.ui_mass_analyze(
+            "2024-02-15",
+            "",
+            "",
+            "",
+            tenant.tenant_id,
+            True,
+        )
+    )
+
+    assert all(update[0] == gr.skip() for update in updates[1:-1])
+    final_display_update, final_state = updates[-1][0], updates[-1][1]
+    assert len(final_display_update["value"]) == 4
+    assert len(final_state) == 4
+    assert "row_count" not in final_display_update
 
 
 def test_batch_filter_visibility_is_shown_only_by_final_streaming_update(monkeypatch) -> None:
