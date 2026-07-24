@@ -969,6 +969,7 @@ class UIHandlers:
         tenant_id,
         authed,
         auth_session=None,
+        filter_option: str = "Needs follow-up",
     ):
         """
         Масавы аналіз (STREAMING).
@@ -985,6 +986,7 @@ class UIHandlers:
             authed,
             auth_session,
             custom_prompt_override=None,
+            filter_option=filter_option,
         )
 
     def build_custom_batch_prompt(self, conditions_text: str) -> str:
@@ -1039,6 +1041,7 @@ class UIHandlers:
         tenant_id,
         authed,
         auth_session=None,
+        filter_option: str = "Needs follow-up",
     ):
         """Запуск батча з карыстальніцкім промптам."""
 
@@ -1052,6 +1055,7 @@ class UIHandlers:
             authed,
             auth_session,
             custom_prompt_override=custom_prompt,
+            filter_option=filter_option,
         )
 
     def _run_mass_analyze(
@@ -1065,11 +1069,14 @@ class UIHandlers:
         auth_session=None,
         *,
         custom_prompt_override: str | None,
+        filter_option: str = "Needs follow-up",
     ):
         empty_df = pd.DataFrame()
         hidden_df_update = gr.update(value=empty_df, visible=False)
         empty_state = pd.DataFrame()
         hidden_file = gr.update(value=None, visible=False)
+        hidden_filter = gr.update(visible=False)
+        unchanged_filter = gr.skip()
 
         def h3(txt: str) -> str:
             return f"### {txt}"
@@ -1086,6 +1093,7 @@ class UIHandlers:
                 empty_state,
                 h2_error("🔐 Enter the password to run batch analysis."),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -1100,6 +1108,7 @@ class UIHandlers:
                 empty_state,
                 h2_error(denial),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -1109,6 +1118,7 @@ class UIHandlers:
                 empty_state,
                 h2_error("Project dependencies are not loaded."),
                 hidden_file,
+                hidden_filter,
             )
             return
 
@@ -1136,6 +1146,7 @@ class UIHandlers:
                         f"❌ Configured batch model '{effective_model_key}' is not available."
                     ),
                     hidden_file,
+                    hidden_filter,
                 )
                 return
 
@@ -1153,6 +1164,7 @@ class UIHandlers:
                     empty_state,
                     h3("ℹ️ No calls for the selected filter."),
                     hidden_file,
+                    hidden_filter,
                 )
                 return
 
@@ -1167,6 +1179,7 @@ class UIHandlers:
                 empty_state,
                 h3(f"Starting batch analysis for {total} call(s)..."),
                 hidden_file,
+                unchanged_filter,
             )
 
             # UI always uses sequential mode (one-by-one generate_content).
@@ -1211,9 +1224,10 @@ class UIHandlers:
 
                 yield (
                     gr.update(value=utils.prepare_results_display(partial_df), visible=True),
-                    partial_df,
+                    gr.skip(),
                     h3(interim_msg),
                     hidden_file,
+                    unchanged_filter,
                 )
 
             final_df = pd.DataFrame(rows)
@@ -1224,10 +1238,14 @@ class UIHandlers:
             )
 
             yield (
-                gr.update(value=utils.prepare_results_display(final_df), visible=True),
+                gr.update(
+                    value=self.filter_batch_results(filter_option, final_df),
+                    visible=True,
+                ),
                 final_df,
                 h2_success(final_msg),
                 hidden_file,
+                gr.update(visible=True),
             )
 
         except Exception as exc:
@@ -1236,6 +1254,7 @@ class UIHandlers:
                 empty_state,
                 h2_error(f"❌ Analysis failed: {exc}"),
                 hidden_file,
+                hidden_filter,
             )
             return
 

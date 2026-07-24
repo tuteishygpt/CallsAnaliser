@@ -5,6 +5,7 @@ import json
 import os
 from types import SimpleNamespace
 
+import gradio as gr
 import pandas as pd
 import pytest
 
@@ -15,6 +16,17 @@ os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 
 import app
 from calls_analyser.ui import utils
+
+
+def test_batch_results_table_reserves_space_for_multiple_rows() -> None:
+    batch_results_table = next(
+        component
+        for component in app.demo.config["components"]
+        if component["type"] == "dataframe"
+        and component["props"].get("label") == "Batch results"
+    )
+
+    assert batch_results_table["props"]["row_count"] == [10, "dynamic"]
 
 
 class _StubTenantService:
@@ -118,11 +130,12 @@ def test_ui_mass_analyze_requires_authentication() -> None:
     result = list(app.ui_mass_analyze("2024-01-01", "", "", "", "tenant", False))
 
     assert len(result) == 1
-    df_update, state_df, message, file_update = result[0]
+    df_update, state_df, message, file_update, filter_update = result[0]
     assert df_update["visible"] is False
     assert isinstance(state_df, pd.DataFrame)
     assert state_df.empty
     assert file_update["visible"] is False
+    assert filter_update["visible"] is False
     assert "Enter the password" in message
 
 
@@ -132,7 +145,7 @@ def test_ui_mass_analyze_reports_absence_of_calls(monkeypatch: pytest.MonkeyPatc
     result = list(app.ui_mass_analyze("2024-02-10", "", "", "", "tenant", True))
 
     assert len(result) == 1
-    df_update, state_df, message, file_update = result[0]
+    df_update, state_df, message, file_update, filter_update = result[0]
     assert isinstance(df_update["value"], pd.DataFrame)
     assert df_update["value"].empty
     assert isinstance(state_df, pd.DataFrame)
@@ -140,6 +153,7 @@ def test_ui_mass_analyze_reports_absence_of_calls(monkeypatch: pytest.MonkeyPatc
     assert df_update["visible"] is False
     assert message == "### ℹ️ No calls for the selected filter."
     assert file_update["visible"] is False
+    assert filter_update["visible"] is False
 
 
 def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,10 +174,19 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
             unique_id="call-2",
             raw={},
         ),
+        SimpleNamespace(
+            started_at=dt.datetime(2024, 2, 15, 10, 30),
+            caller_id="Carol",
+            destination="Support",
+            duration_seconds=30,
+            unique_id="call-3",
+            raw={},
+        ),
     ]
     responses = {
         "call-1": json.dumps({"needs_follow_up": True, "reason": "Schedule callback"}),
         "call-2": RuntimeError("network down"),
+        "call-3": json.dumps({"needs_follow_up": True, "reason": "Call back"}),
     }
     tenant, analysis = _configure_batch_environment(
         monkeypatch, entries=entries, responses=responses
@@ -171,18 +194,21 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
 
     result = list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
 
-    assert len(result) == 4
+    assert len(result) == 5
 
-    initial_df_update, initial_state, initial_message, _ = result[0]
-    assert initial_message == "### Starting batch analysis for 2 call(s)..."
+    initial_df_update, initial_state, initial_message, _, initial_filter = result[0]
+    assert initial_message == "### Starting batch analysis for 3 call(s)..."
     assert initial_df_update["visible"] is False
     assert initial_state.empty
+    assert initial_filter == gr.skip()
 
-    partial_df_update, partial_state, partial_message, _ = result[1]
-    assert "Analyzing 1/2" in partial_message
+    partial_df_update, partial_state, partial_message, _, partial_filter = result[1]
+    assert "Analyzing 1/3" in partial_message
+    assert isinstance(partial_state, dict)
+    assert partial_state == gr.skip()
+    assert partial_filter == gr.skip()
     partial_df = partial_df_update["value"]
     assert "UniqueId" not in partial_df.columns
-    assert list(partial_state["UniqueId"]) == ["call-1"]
     assert list(partial_df["Status"]) == ["✅"]
     assert list(partial_df["Needs follow-up"]) == ["Yes"]
     assert list(partial_df["Reason"]) == ["Schedule callback"]
@@ -190,32 +216,35 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
         "<a href=\"https://bot.example/permanent/call-1\" target=\"_blank\">Listen</a>"
     )
 
-    error_df_update, error_state, error_message, _ = result[2]
-    assert "Analyzing 2/2" in error_message
+    error_df_update, error_state, error_message, _, error_filter = result[2]
+    assert "Analyzing 2/3" in error_message
+    assert isinstance(error_state, dict)
+    assert error_state == gr.skip()
+    assert error_filter == gr.skip()
     error_df = error_df_update["value"]
     assert "UniqueId" not in error_df.columns
-    assert list(error_state["UniqueId"]) == ["call-1", "call-2"]
     assert list(error_df["Status"]) == ["✅", "❌"]
     assert error_df.iloc[1]["Reason"].startswith("❌ network down")
     assert error_df.iloc[1]["Link"] == ""
 
-    final_df_update, final_state, final_message, final_file = result[3]
-    assert final_message == "## ✅ Batch analysis completed. Found: 2, processed successfully: 1"
+    final_df_update, final_state, final_message, final_file, final_filter = result[4]
+    assert final_message == "## ✅ Batch analysis completed. Found: 3, processed successfully: 2"
     final_df = final_df_update["value"]
     assert isinstance(final_df, pd.DataFrame)
     assert "UniqueId" not in final_df.columns
-    assert list(final_state["UniqueId"]) == ["call-1", "call-2"]
-    assert list(final_df["Status"]) == ["✅", "❌"]
+    assert list(final_state["UniqueId"]) == ["call-1", "call-2", "call-3"]
+    assert list(final_df["Needs follow-up"]) == ["Yes", "Yes"]
     assert final_file["visible"] is False
+    assert final_filter["visible"] is True
 
     assert analysis is not None
-    assert [call[0] for call in analysis.calls] == ["call-1", "call-2"]
+    assert [call[0] for call in analysis.calls] == ["call-1", "call-2", "call-3"]
     for _, _, options in analysis.calls:
         assert options.model_key == "fake-model"
         assert options.prompt_key == "batch"
 
 
-def test_batch_filter_visibility_is_not_sent_in_streaming_updates(monkeypatch) -> None:
+def test_batch_filter_visibility_is_shown_only_by_final_streaming_update(monkeypatch) -> None:
     tenant, _ = _configure_batch_environment(
         monkeypatch,
         entries=[_batch_entry("call-1")],
@@ -224,7 +253,9 @@ def test_batch_filter_visibility_is_not_sent_in_streaming_updates(monkeypatch) -
 
     updates = list(app.ui_mass_analyze("2024-02-15", "", "", "", tenant.tenant_id, True))
 
-    assert all(len(update) == 4 for update in updates)
+    assert all(len(update) == 5 for update in updates)
+    assert all(update[4] == gr.skip() for update in updates[:-1])
+    assert updates[-1][4]["visible"] is True
 
 
 def test_batch_filter_visibility_depends_on_completed_results() -> None:

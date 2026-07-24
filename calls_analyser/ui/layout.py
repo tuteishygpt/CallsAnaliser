@@ -24,6 +24,12 @@ JS_FIX_LINKS = """
 }
 """
 
+JS_REMEASURE_BATCH_RESULTS = """
+() => {
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+}
+"""
+
 
 def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
     auth_mode = handlers.has_auth_users()
@@ -136,6 +142,7 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                     label="Batch results",
                     interactive=True,
                     visible=False,
+                    row_count=10,
                     datatype=[
                         "str",
                         "str",
@@ -475,26 +482,20 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 tenant_selector,
                 authed,
                 auth_session,
+                filter_radio,
             ],
             outputs=[
                 batch_results_df,
                 batch_results_state,
                 batch_status_md,
                 batch_file,
+                batch_filter_row,
             ],
-        ).then(
-            fn=handlers.filter_batch_results,
-            inputs=[filter_radio, batch_results_state],
-            outputs=[batch_results_df],
-        ).then(
-            fn=handlers.update_batch_filter_visibility,
-            inputs=[batch_results_state],
-            outputs=[batch_filter_row],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
         ).then(
-            fn=None, js=JS_FIX_LINKS
+            fn=None, js=JS_REMEASURE_BATCH_RESULTS
         )
 
         batch_custom_btn.click(
@@ -528,26 +529,20 @@ def build_demo(deps: AppDependencies, handlers: UIHandlers) -> gr.Blocks:
                 tenant_selector,
                 authed,
                 auth_session,
+                filter_radio,
             ],
             outputs=[
                 batch_results_df,
                 batch_results_state,
                 batch_status_md,
                 batch_file,
+                batch_filter_row,
             ],
-        ).then(
-            fn=handlers.filter_batch_results,
-            inputs=[filter_radio, batch_results_state],
-            outputs=[batch_results_df],
-        ).then(
-            fn=handlers.update_batch_filter_visibility,
-            inputs=[batch_results_state],
-            outputs=[batch_filter_row],
         ).then(
             fn=handlers.hide_call_list,
             outputs=[calls_df],
         ).then(
-            fn=None, js=JS_FIX_LINKS
+            fn=None, js=JS_REMEASURE_BATCH_RESULTS
         )
 
         batch_results_df.select(
