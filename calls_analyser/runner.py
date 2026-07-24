@@ -19,7 +19,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("daily_batch")
 
 try:
-    from calls_analyser.ui.dependencies import build_dependencies
+    from calls_analyser.ui.dependencies import (
+        build_dependencies,
+        build_email_report_service_for_settings,
+    )
     from calls_analyser.ui import utils
     from calls_analyser.services.gemini_batch import VertexBatchRunner, BatchTask, guess_mime_type
     from calls_analyser.services.batch_results import (
@@ -222,6 +225,9 @@ class BatchExecutionContext:
     time_from: Any
     time_to: Any
     call_type: Any
+    email_to: str = ""
+    email_from: str = ""
+    email_from_name: str = ""
 
 
 def resolve_batch_execution_context(
@@ -295,6 +301,9 @@ def resolve_batch_execution_context(
         time_from=time_from,
         time_to=time_to,
         call_type=call_type,
+        email_to=getattr(resolved_settings, "email_to", "") if resolved_settings else "",
+        email_from=getattr(resolved_settings, "email_from", "") if resolved_settings else "",
+        email_from_name=getattr(resolved_settings, "email_from_name", "") if resolved_settings else "",
     )
 
 
@@ -525,7 +534,10 @@ def run_batch_process(
         for entry in entries
     ]
     results_df = pd.DataFrame(rows)
-    email_report_service = getattr(deps, "email_report_service", None)
+    email_report_service = build_email_report_service_for_settings(
+        context,
+        fallback_service=getattr(deps, "email_report_service", None),
+    )
     if email_report_service is not None and parsed_result_by_id:
         try:
             email_report_service.send(

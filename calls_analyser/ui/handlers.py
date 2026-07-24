@@ -12,7 +12,7 @@ import gradio as gr
 import pandas as pd
 
 from . import config
-from .dependencies import AppDependencies, AnalysisOptions
+from .dependencies import AppDependencies, AnalysisOptions, build_email_report_service_for_tenant
 from . import utils
 from calls_analyser.adapters.ai.gemini import GeminiAIAdapter
 from calls_analyser.domain.exceptions import AIModelError
@@ -1289,14 +1289,27 @@ class UIHandlers:
         if self.deps.email_report_service is None:
             return "❌ Email is not configured. Set BREVO_API_KEY or GOOGLE_app."
 
-        recipient = os.environ.get("EMAIL_TO", "").strip() or "tuttstt@gmail.com"
+        resolved_tenant_id = (selected_tenant or config.DEFAULT_TENANT_ID).strip()
+        email_report_service = build_email_report_service_for_tenant(
+            self.deps.tenant_settings_service,
+            resolved_tenant_id,
+            fallback_service=self.deps.email_report_service,
+        )
+        if email_report_service is None:
+            return "❌ Email is not configured. Set BREVO_API_KEY or GOOGLE_app."
+
+        recipient = getattr(
+            email_report_service,
+            "recipient",
+            os.environ.get("EMAIL_TO", "").strip() or "tuttstt@gmail.com",
+        )
         try:
             day = utils.parse_day(report_date)
-            self.deps.email_report_service.send(
+            email_report_service.send(
                 results_df,
                 filter_option=filter_option or "All",
                 report_date=day.isoformat(),
-                tenant_id=(selected_tenant or config.DEFAULT_TENANT_ID).strip(),
+                tenant_id=resolved_tenant_id,
             )
             return f"✅ Email sent to {recipient}."
         except Exception as exc:

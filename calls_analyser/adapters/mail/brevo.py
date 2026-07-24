@@ -32,6 +32,7 @@ class BrevoHTTPSAdapter:
     def from_env(
         cls,
         *,
+        sender_name: str | None = None,
         http_post: Callable[..., object] = requests.post,
     ) -> "BrevoHTTPSAdapter":
         api_key = os.environ.get("BREVO_API_KEY", "").strip()
@@ -39,7 +40,11 @@ class BrevoHTTPSAdapter:
             raise ValueError("BREVO_API_KEY is not configured.")
         return cls(
             api_key=api_key,
-            sender_name=os.environ.get("EMAIL_FROM_NAME", "").strip(),
+            sender_name=(
+                sender_name.strip()
+                if sender_name is not None
+                else os.environ.get("EMAIL_FROM_NAME", "").strip()
+            ),
             http_post=http_post,
         )
 

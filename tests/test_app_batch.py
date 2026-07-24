@@ -346,6 +346,7 @@ def test_ui_mass_analyze_does_not_mask_unexpected_registry_errors(monkeypatch) -
 def test_send_results_email_uses_selected_filter_and_full_results(monkeypatch) -> None:
     report_service = _RecordingEmailReportService()
     monkeypatch.setattr(app.handlers.deps, "email_report_service", report_service, raising=False)
+    monkeypatch.setattr(app.handlers.deps, "tenant_settings_service", None, raising=False)
     monkeypatch.setattr(app.handlers.deps, "auth_service", None, raising=False)
     full_results = pd.DataFrame(
         [

@@ -12,10 +12,12 @@ class FakeEmailReportService:
 
 class FakeBrevoAdapter:
     created = 0
+    sender_names: list[str | None] = []
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls, *, sender_name: str | None = None):
         cls.created += 1
+        cls.sender_names.append(sender_name)
         return "brevo-port"
 
 
@@ -66,3 +68,36 @@ def test_email_report_service_falls_back_to_gmail_without_brevo_key(monkeypatch)
     assert service.recipient == "tuttstt@gmail.com"
     assert FakeBrevoAdapter.created == 0
     assert FakeGmailAdapter.created == 1
+
+
+def test_tenant_email_settings_override_environment_values(monkeypatch) -> None:
+    class TenantSettingsService:
+        @staticmethod
+        def resolve(tenant_id: str):
+            assert tenant_id == "amedis"
+            return type(
+                "TenantSettings",
+                (),
+                {
+                    "email_to": "recipient@amedis.example",
+                    "email_from": "sender@amedis.example",
+                    "email_from_name": "Amedis calls",
+                },
+            )()
+
+    FakeBrevoAdapter.created = 0
+    FakeBrevoAdapter.sender_names = []
+    monkeypatch.setenv("BREVO_API_KEY", "brevo-secret")
+    monkeypatch.setenv("EMAIL_FROM", "global-sender@example.com")
+    monkeypatch.setenv("EMAIL_TO", "global-recipient@example.com")
+    monkeypatch.setattr(dependencies, "EmailReportService", FakeEmailReportService)
+    monkeypatch.setattr(dependencies, "BrevoHTTPSAdapter", FakeBrevoAdapter)
+
+    service = dependencies.build_email_report_service_for_tenant(
+        TenantSettingsService(),
+        "amedis",
+    )
+
+    assert service.sender == "sender@amedis.example"
+    assert service.recipient == "recipient@amedis.example"
+    assert FakeBrevoAdapter.sender_names == ["Amedis calls"]

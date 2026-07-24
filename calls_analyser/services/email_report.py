@@ -33,6 +33,10 @@ class EmailReportService:
         self._sender = sender
         self._recipient = recipient
 
+    @property
+    def recipient(self) -> str:
+        return self._recipient
+
     def send(
         self,
         results: pd.DataFrame,

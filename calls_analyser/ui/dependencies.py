@@ -232,27 +232,72 @@ def _build_call_log_service(tenant_service: TenantService, storage_adapter: Any)
     return CallLogService(factory.create, storage_adapter)
 
 
-def _build_email_report_service() -> Any:
+def _build_email_report_service(
+    *,
+    sender: str | None = None,
+    recipient: str | None = None,
+    sender_name: str | None = None,
+) -> Any:
     if EmailReportService is None:
         return None
 
-    recipient = os.environ.get("EMAIL_TO", "").strip() or GMAIL_ADDRESS
+    resolved_recipient = recipient or os.environ.get("EMAIL_TO", "").strip() or GMAIL_ADDRESS
 
     if os.environ.get("BREVO_API_KEY", "").strip() and BrevoHTTPSAdapter is not None:
         return EmailReportService(
-            BrevoHTTPSAdapter.from_env(),
-            sender=os.environ.get("EMAIL_FROM", "").strip() or GMAIL_ADDRESS,
-            recipient=recipient,
+            BrevoHTTPSAdapter.from_env(sender_name=sender_name),
+            sender=sender or os.environ.get("EMAIL_FROM", "").strip() or GMAIL_ADDRESS,
+            recipient=resolved_recipient,
         )
 
     if os.environ.get("GOOGLE_app", "").strip() and GmailSMTPAdapter is not None:
         return EmailReportService(
             GmailSMTPAdapter.from_env(),
             sender=GMAIL_ADDRESS,
-            recipient=recipient,
+            recipient=resolved_recipient,
         )
 
     return None
+
+
+def build_email_report_service_for_tenant(
+    tenant_settings_service: Any,
+    tenant_id: str,
+    *,
+    fallback_service: Any = None,
+) -> Any:
+    """Build an email service using a tenant's settings with environment fallbacks."""
+    resolve_settings = getattr(tenant_settings_service, "resolve", None)
+    if not callable(resolve_settings):
+        return fallback_service or _build_email_report_service()
+
+    try:
+        settings = resolve_settings(tenant_id)
+    except Exception:
+        return fallback_service or _build_email_report_service()
+
+    return build_email_report_service_for_settings(
+        settings,
+        fallback_service=fallback_service,
+    )
+
+
+def build_email_report_service_for_settings(settings: Any, *, fallback_service: Any = None) -> Any:
+    """Build an email service from already-resolved tenant settings."""
+    if settings is None:
+        return fallback_service or _build_email_report_service()
+
+    sender = getattr(settings, "email_from", "").strip() or None
+    recipient = getattr(settings, "email_to", "").strip() or None
+    sender_name = getattr(settings, "email_from_name", "").strip() or None
+    if not any((sender, recipient, sender_name)):
+        return fallback_service or _build_email_report_service()
+
+    return _build_email_report_service(
+        sender=sender,
+        recipient=recipient,
+        sender_name=sender_name,
+    )
 
 
 def _build_auth_service(
