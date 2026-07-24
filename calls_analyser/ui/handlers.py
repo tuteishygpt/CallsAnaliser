@@ -1175,7 +1175,7 @@ class UIHandlers:
             # which aligns with runner.py/scheduler cache keys.
 
             yield (
-                gr.update(value=pd.DataFrame(), visible=False),
+                gr.update(value=pd.DataFrame(), visible=True),
                 empty_state,
                 h3(f"Starting batch analysis for {total} call(s)..."),
                 hidden_file,

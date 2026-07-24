@@ -187,7 +187,8 @@ def test_ui_mass_analyze_streams_partial_and_final_results(monkeypatch: pytest.M
 
     initial_df_update, initial_state, initial_message, _, initial_filter = result[0]
     assert initial_message == "### Starting batch analysis for 3 call(s)..."
-    assert initial_df_update["visible"] is False
+    assert initial_df_update["visible"] is True
+    assert initial_df_update["value"].empty
     assert initial_state.empty
     assert initial_filter == gr.skip()
 
