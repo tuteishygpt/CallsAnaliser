@@ -12,6 +12,7 @@ venv/
 .tmp_*.txt
 .seg.txt
 .local-app.*
+.local-app-*
 outputs/
 
 # Local workspace files
